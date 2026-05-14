@@ -1,32 +1,23 @@
-import {
-	DummyDriver,
-	PostgresAdapter,
-	PostgresIntrospector,
-	PostgresQueryCompiler,
-} from 'kysely'
+import 'dotenv/config'
+import { PostgresDialect } from 'kysely'
 import { defineConfig } from 'kysely-ctl'
+import { Pool } from 'pg'
+import { join } from 'path'
 
 export default defineConfig({
-	// replace me with a real dialect instance OR a dialect name + `dialectConfig` prop.
-	dialect: {
-		createAdapter() {
-			return new PostgresAdapter()
-		},
-		createDriver() {
-			return new DummyDriver()
-		},
-		createIntrospector(db) {
-			return new PostgresIntrospector(db)
-		},
-		createQueryCompiler() {
-			return new PostgresQueryCompiler()
-		},
+	dialect: new PostgresDialect({
+		pool: new Pool({
+			host: process.env.DB_HOST,
+			port: Number(process.env.DB_PORT),
+			user: process.env.DB_USER,
+			password: process.env.DB_PASSWORD,
+			database: process.env.DB_NAME,
+		}),
+	}),
+	migrations: {
+		migrationFolder: join(__dirname, '..', 'src', 'database', 'migrations'),
 	},
-	//   migrations: {
-	//     migrationFolder: "migrations",
-	//   },
-	//   plugins: [],
-	//   seeds: {
-	//     seedFolder: "seeds",
-	//   }
+	seeds: {
+		seedFolder: join(__dirname, '..', 'src', 'database', 'seeds'),
+	},
 })

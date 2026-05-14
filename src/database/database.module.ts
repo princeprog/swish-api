@@ -1,5 +1,5 @@
 import { Global, Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config'
+import { ConfigService } from '@nestjs/config';
 import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
 import { DB } from './db';
@@ -29,4 +29,4 @@ export const DATABASE_TOKEN = 'KYSELY_DB';
   ],
   exports: [DATABASE_TOKEN],
 })
-export class DatabaseModule { }
+export class DatabaseModule {}

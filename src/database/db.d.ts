@@ -3,4 +3,34 @@
  * Please do not edit it manually.
  */
 
-export interface DB {}
+import type { ColumnType } from "kysely";
+
+export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
+  ? ColumnType<S, I | undefined, U>
+  : ColumnType<T, T | undefined, T>;
+
+export type Timestamp = ColumnType<Date, Date | string, Date | string>;
+
+export interface AuthSessions {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  last_used_at: Timestamp | null;
+  refresh_token_hash: string;
+  revoked_at: Timestamp | null;
+  user_id: string;
+}
+
+export interface AuthUsers {
+  created_at: Generated<Timestamp>;
+  email: string;
+  id: Generated<string>;
+  password_hash: string;
+  role: string;
+  updated_at: Generated<Timestamp>;
+  username: string;
+}
+
+export interface DB {
+  "auth.sessions": AuthSessions;
+  "auth.users": AuthUsers;
+}
