@@ -1,5 +1,5 @@
 import { Global, Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
 import { DB } from './db';
@@ -8,6 +8,7 @@ export const DATABASE_TOKEN = 'KYSELY_DB';
 
 @Global()
 @Module({
+  imports: [ConfigModule],
   providers: [
     {
       provide: DATABASE_TOKEN,
