@@ -5,7 +5,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import * as bcrypt from 'bcrypt';
 @Injectable()
 export class UsersService {
-  constructor(@Inject('KYSELY_DB') private readonly db: Kysely<DB>) {}
+  constructor(@Inject('KYSELY_DB') private readonly db: Kysely<DB>) { }
 
   async create(createUserDto: CreateUserDto) {
     const { email, username, password } = createUserDto;
@@ -40,6 +40,15 @@ export class UsersService {
 
       throw error;
     }
+  }
+
+  async findOne(username: string) {
+    const user = this.db.selectFrom('auth.users').selectAll().where('username', '=', username).executeTakeFirst()
+    
+    if(!user) {
+      throw new Error('User not found');
+    }
+    return user;
   }
 
   async findAll() {
