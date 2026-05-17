@@ -8,6 +8,7 @@ import { AuthModule } from './src/modules/auth/auth.module';
 import { LeagueModule } from './src/modules/league/league.module';
 import { SeasonModule } from './src/modules/season/season.module';
 import { TeamModule } from './src/modules/team/team.module';
+import { GameModule } from './src/modules/game/game.module';
 
 
 @Module({
@@ -19,6 +20,7 @@ import { TeamModule } from './src/modules/team/team.module';
     LeagueModule,
     SeasonModule,
     TeamModule,
+    GameModule,
   ],
   controllers: [AppController],
   providers: [AppService],
