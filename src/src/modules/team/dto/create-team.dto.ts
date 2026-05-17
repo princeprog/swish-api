@@ -1,0 +1,7 @@
+export class CreateTeamDto {
+  name: string;
+  abbreviation: string;
+  coach_name: string;
+  primary_color: string;
+  secondary_color: string;
+}

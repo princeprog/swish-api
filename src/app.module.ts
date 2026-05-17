@@ -7,6 +7,7 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './src/modules/auth/auth.module';
 import { LeagueModule } from './src/modules/league/league.module';
 import { SeasonModule } from './src/modules/season/season.module';
+import { TeamModule } from './src/modules/team/team.module';
 
 
 @Module({
@@ -17,6 +18,7 @@ import { SeasonModule } from './src/modules/season/season.module';
     AuthModule,
     LeagueModule,
     SeasonModule,
+    TeamModule,
   ],
   controllers: [AppController],
   providers: [AppService],
