@@ -3,12 +3,25 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from 'kysely';
+import type { ColumnType } from "kysely";
 
-export type Generated<T> =
-  T extends ColumnType<infer S, infer I, infer U>
-    ? ColumnType<S, I | undefined, U>
-    : ColumnType<T, T | undefined, T>;
+export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
+  ? ColumnType<S, I | undefined, U>
+  : ColumnType<T, T | undefined, T>;
+
+export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
+
+export type Json = JsonValue;
+
+export type JsonArray = JsonValue[];
+
+export type JsonObject = {
+  [x: string]: JsonValue | undefined;
+};
+
+export type JsonPrimitive = boolean | number | string | null;
+
+export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
@@ -25,13 +38,146 @@ export interface AuthUsers {
   created_at: Generated<Timestamp>;
   email: string;
   id: Generated<string>;
+  league_id: number | null;
   password_hash: string;
+  player_id: Int8 | null;
   role: string;
+  team_id: number | null;
   updated_at: Generated<Timestamp>;
   username: string;
 }
 
+export interface GameAward {
+  award_type: string;
+  awarded_at: Generated<Timestamp>;
+  description: string;
+  game_id: Int8;
+  id: Generated<string>;
+  player_id: Int8;
+  season_id: number;
+}
+
+export interface GameGame {
+  away_score: Generated<number>;
+  away_team: number;
+  game_type: string;
+  home_score: Generated<number>;
+  home_team: number;
+  id: Generated<Int8>;
+  scheduled_at: Timestamp;
+  season_id: number;
+  status: Int8;
+  venue: string;
+}
+
+export interface GameGameEvent {
+  clock_time: string;
+  created_at: Generated<Timestamp>;
+  event_type: string;
+  event_value: number;
+  game_id: Int8;
+  id: Generated<Int8>;
+  period: number;
+  player_id: Int8;
+  team_id: number;
+}
+
+export interface GameGameStats {
+  assists: number;
+  blocks: number;
+  fgm_fga: string;
+  ftm_fta: string;
+  game_id: Int8;
+  id: Generated<number>;
+  minutes_played: number;
+  personal_fouls: number;
+  player_id: Int8;
+  points: number;
+  rebounds: number;
+  steal: number;
+  team_id: number;
+  tpm_tpa: string;
+}
+
+export interface GameGameSummary {
+  game_id: Int8;
+  highlights: string;
+  id: Generated<Int8>;
+  narrative: string;
+  published_at: Generated<Timestamp>;
+}
+
+export interface LeagueLeague {
+  contact_info: string;
+  created_at: Generated<Timestamp>;
+  description: string;
+  id: Generated<number>;
+  location: string;
+  logo_url: string;
+  name: string;
+  rules_config: Json;
+}
+
+export interface LeagueSeason {
+  end_date: Timestamp;
+  id: Generated<number>;
+  league_id: number;
+  name: string;
+  playoff_format: string;
+  start_date: Timestamp;
+  status: Int8;
+}
+
+export interface LeagueSeasonTeam {
+  bracket: string;
+  season_id: number;
+  team_id: number;
+}
+
+export interface LeagueTeams {
+  abbreviation: string;
+  coach_name: string;
+  id: Generated<number>;
+  league_id: number;
+  logo_url: string;
+  name: string;
+  primary_color: string;
+  secondary_color: string;
+  user_id: string;
+}
+
+export interface PlayerPlayer {
+  date_of_birth: Timestamp;
+  full_name: string;
+  height_cm: number;
+  id: Generated<Int8>;
+  photo_url: string;
+  position: string;
+  weight_kg: number;
+}
+
+export interface PlayerRoster {
+  id: Generated<Int8>;
+  jersey_number: number;
+  joined_date: Timestamp;
+  player_id: Int8;
+  season_id: number;
+  status: string;
+  team_id: number;
+}
+
 export interface DB {
-  'auth.sessions': AuthSessions;
-  'auth.users': AuthUsers;
+  "auth.sessions": AuthSessions;
+  "auth.users": AuthUsers;
+  "game.Award": GameAward;
+  "game.Game": GameGame;
+  "game.GameEvent": GameGameEvent;
+  "game.GameStats": GameGameStats;
+  "game.GameSummary": GameGameSummary;
+  "league.League": LeagueLeague;
+  "league.Season": LeagueSeason;
+  "league.SeasonTeam": LeagueSeasonTeam;
+  "league.Teams": LeagueTeams;
+  "player.Player": PlayerPlayer;
+  "player.Roster": PlayerRoster;
 }

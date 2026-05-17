@@ -28,7 +28,7 @@ export class AuthService {
   async validateUser(username: string, password: string) {
     const user = await this.usersService.findOne(username);
     if (user && await bcrypt.compare(password, user.password_hash)) {
-      return { id: user.id, username: user.username };
+      return user;
     }
     throw new Error('Invalid username or password');
   }
@@ -56,6 +56,7 @@ export class AuthService {
       username: user.username,
       sub: user.id,
       session_id: createSession.id,
+      role: user.role
     }
 
     const {accessToken, refreshToken} = this.generateTokenPair(payload);
@@ -71,7 +72,19 @@ export class AuthService {
       this.setRefreshTokenCookie(response, refreshToken);
     }
 
-    return { accessToken, refreshToken };
+    const hasLeagueConfigured = user.role === 'league_admin' ? user.league_id !== null : true;
+
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        league_id: user.league_id,
+        hasLeagueConfigured,
+      },
+    };
   }
 
   private setAccessTokenCookie(response: Response, accessToken: string) {
@@ -100,19 +113,26 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  findAll() {
-    return `This action returns all auth`;
-  }
+  async getProfile(userId: string) {
+    const user = await this.db
+      .selectFrom('auth.users')
+      .selectAll()
+      .where('id', '=', userId as any)
+      .executeTakeFirst();
 
-  findOne(id: number) {
-    return `This action returns a #${id} auth`;
-  }
+    if (!user) {
+      throw new Error('User not found');
+    }
 
-  update(id: number, updateAuthDto: UpdateAuthDto) {
-    return `This action updates a #${id} auth`;
-  }
+    const hasLeagueConfigured = user.role === 'league_admin' ? user.league_id !== null : true;
 
-  remove(id: number) {
-    return `This action removes a #${id} auth`;
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      league_id: user.league_id,
+      hasLeagueConfigured,
+    };
   }
 }

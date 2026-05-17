@@ -5,6 +5,8 @@ import { AppService } from './app.service';
 import { UsersModule } from './src/modules/users/users.module';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './src/modules/auth/auth.module';
+import { LeagueModule } from './src/modules/league/league.module';
+
 
 @Module({
   imports: [
@@ -12,6 +14,7 @@ import { AuthModule } from './src/modules/auth/auth.module';
     UsersModule,
     DatabaseModule,
     AuthModule,
+    LeagueModule,
   ],
   controllers: [AppController],
   providers: [AppService],
