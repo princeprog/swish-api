@@ -93,3 +93,64 @@ describe('GameService round-robin generation', () => {
     expect(firstDate.toISOString().startsWith('2026-10-02')).toBe(true);
   });
 });
+
+describe('GameService status lifecycle', () => {
+  function createDbForStatus(currentStatus: number) {
+    const state = {
+      membership: { league_id: 12, role: 'league_admin' },
+      game: { id: 500, status: currentStatus, season_status: 1 },
+      updatedStatus: -1,
+    };
+
+    const db = {
+      selectFrom: jest.fn((_table: string) => {
+        const filters: Record<string, any> = {};
+        const builder = {
+          select: jest.fn(() => builder),
+          innerJoin: jest.fn(() => builder),
+          where: jest.fn((column: string, _op: string, value: any) => {
+            filters[column] = value;
+            return builder;
+          }),
+          executeTakeFirst: jest.fn(async () => {
+            if (_table === 'league.league_members') {
+              return filters.user_id === 'league-admin-user' ? state.membership : undefined;
+            }
+            if (_table === 'game.Game as g') {
+              return state.game;
+            }
+            return undefined;
+          }),
+        };
+        return builder;
+      }),
+      updateTable: jest.fn((_table: string) => ({
+        set: (payload: any) => ({
+          where: () => ({
+            execute: async () => {
+              state.updatedStatus = payload.status;
+            },
+          }),
+        }),
+      })),
+    };
+
+    return { db: db as any, state };
+  }
+
+  it('allows scheduled to live transition', async () => {
+    const { db, state } = createDbForStatus(0);
+    const service = new GameService(db);
+    const result = await service.updateStatus(500, { status: 1 }, 'league-admin-user');
+    expect(result.success).toBe(true);
+    expect(state.updatedStatus).toBe(1);
+  });
+
+  it('blocks finished to live transition', async () => {
+    const { db } = createDbForStatus(2);
+    const service = new GameService(db);
+    await expect(service.updateStatus(500, { status: 1 }, 'league-admin-user')).rejects.toThrow(
+      'Invalid game status transition',
+    );
+  });
+});
