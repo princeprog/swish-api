@@ -1,4 +1,4 @@
-import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import type { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
 import { CreateTeamDto } from './dto/create-team.dto';
@@ -75,6 +75,20 @@ export class TeamService {
   }
 
   async addRosterPlayer(teamId: number, dto: CreateRosterPlayerDto) {
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id', 'status'])
+      .where('id', '=', dto.season_id)
+      .executeTakeFirst();
+
+    if (!season) {
+      throw new NotFoundException('Season not found.');
+    }
+
+    if (Number(season.status) === 3) {
+      throw new BadRequestException('Cannot modify roster for an archived season.');
+    }
+
     // 1. Insert Player Profile
     const player = await this.db
       .insertInto('player.Player')

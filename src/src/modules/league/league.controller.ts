@@ -1,10 +1,11 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { LeagueService } from './league.service';
 import { CreateLeagueDto } from './dto/create-league.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { CreateLeagueInviteDto } from './dto/create-league-invite.dto';
 import { LeagueInvitationService } from './league-invitation.service';
 import type { Response } from 'express';
+import { UpdateLeagueDto } from './dto/update-league.dto';
 
 @Controller('league')
 export class LeagueController {
@@ -24,6 +25,16 @@ export class LeagueController {
   @Get()
   findAll() {
     return this.leagueService.findAll();
+  }
+
+  @UseGuards(AuthGuard)
+  @Patch(':leagueId')
+  updateLeague(
+    @Param('leagueId') leagueId: string,
+    @Body() dto: UpdateLeagueDto,
+    @Req() req: any,
+  ) {
+    return this.leagueService.updateLeagueConfiguration(Number(leagueId), req.user.sub, dto);
   }
 
   @UseGuards(AuthGuard)

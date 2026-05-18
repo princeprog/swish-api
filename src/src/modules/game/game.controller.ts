@@ -3,6 +3,7 @@ import { GameService } from './game.service';
 import { CreateGameDto } from './dto/create-game.dto';
 import { UpdateGameScoreDto } from './dto/update-game-score.dto';
 import { AuthGuard } from '../auth/auth.guard';
+import { GenerateRoundRobinDto } from './dto/generate-round-robin.dto';
 
 @UseGuards(AuthGuard)
 @Controller('game')
@@ -13,6 +14,12 @@ export class GameController {
   create(@Body() createGameDto: CreateGameDto, @Req() req: any) {
     const userId = req.user.sub;
     return this.gameService.create(createGameDto, userId);
+  }
+
+  @Post('generate-round-robin')
+  generateRoundRobin(@Body() dto: GenerateRoundRobinDto, @Req() req: any) {
+    const userId = req.user.sub;
+    return this.gameService.generateRoundRobinSchedule(dto, userId);
   }
 
   @Get()

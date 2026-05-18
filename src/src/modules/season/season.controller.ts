@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Patch, UseGuards, Req } from '@nestjs/common';
 import { SeasonService } from './season.service';
 import { CreateSeasonDto } from './dto/create-season.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -24,5 +24,11 @@ export class SeasonController {
   findOne(@Param('id') id: string, @Req() req: any) {
     const userId = req.user.sub;
     return this.seasonService.findOne(+id, userId);
+  }
+
+  @Patch(':id/archive')
+  archive(@Param('id') id: string, @Req() req: any) {
+    const userId = req.user.sub;
+    return this.seasonService.archive(+id, userId);
   }
 }
