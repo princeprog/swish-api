@@ -1,5 +1,5 @@
 import { Inject, Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
-import { Kysely } from 'node_modules/kysely/dist/kysely';
+import type { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
 import { CreateGameDto } from './dto/create-game.dto';
 import { UpdateGameScoreDto } from './dto/update-game-score.dto';

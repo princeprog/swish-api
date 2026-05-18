@@ -1,5 +1,5 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
-import { Kysely } from 'node_modules/kysely/dist/kysely';
+import type { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { CreateRosterPlayerDto } from './dto/create-roster-player.dto';

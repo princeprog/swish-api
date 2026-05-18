@@ -1,4 +1,4 @@
-import { Kysely } from 'kysely';
+import type { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
 
 export async function getUserLeagueMembership(db: Kysely<DB>, userId: string) {

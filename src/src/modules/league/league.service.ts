@@ -1,6 +1,6 @@
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { CreateLeagueDto } from './dto/create-league.dto';
-import { Kysely } from 'node_modules/kysely/dist/kysely';
+import type { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
 import { getUserLeagueMembership } from './league-membership';
 

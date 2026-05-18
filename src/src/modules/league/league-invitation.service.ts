@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { Kysely, sql } from 'kysely';
+import { sql } from 'kysely';
+import type { Kysely } from 'kysely';
 import { createHash, randomBytes } from 'crypto';
 import { DB } from 'src/database/db';
 import { CreateLeagueInviteDto, LeagueInviteRole } from './dto/create-league-invite.dto';

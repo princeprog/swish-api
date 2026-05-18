@@ -1,15 +1,16 @@
-import { BadRequestException, Injectable, Inject } from '@nestjs/common';
+import { BadRequestException, Injectable, Inject, UnauthorizedException } from '@nestjs/common';
 import { UpdateAuthDto } from './dto/update-auth.dto';
 import { UsersService } from '../users/users.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 import * as bcrypt from 'bcrypt';
 import { DB } from 'src/database/db';
-import { Kysely } from 'node_modules/kysely/dist/kysely';
+import type { Kysely } from 'kysely';
 import { AuthPayloadDto } from './dto/auth-payload.dto';
 import { JwtService } from '@nestjs/jwt';
 import type { Response } from 'express';
 import { getUserLeagueMembership } from '../league/league-membership';
 import { CreateAccountFromInviteDto } from './dto/create-account-from-invite.dto';
+import { createHash, randomUUID } from 'crypto';
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60; // 15 minutes
 const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
@@ -125,7 +126,7 @@ export class AuthService {
     }
 
     const {accessToken, refreshToken} = this.generateTokenPair(payload);
-    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+    const refreshTokenHash = await this.hashRefreshToken(refreshToken);
 
     await this.db.updateTable('auth.sessions')
       .set({ refresh_token_hash: refreshTokenHash })
@@ -173,9 +174,73 @@ export class AuthService {
   }
 
   private generateTokenPair(payload: AuthPayloadDto) {
-    const accessToken = this.jwtService.sign(payload, { expiresIn: `${ACCESS_TOKEN_TTL_SECONDS}s` });
-    const refreshToken = this.jwtService.sign(payload, { expiresIn: `${REFRESH_TOKEN_TTL_SECONDS}s` });
+    const accessToken = this.jwtService.sign(payload, {
+      expiresIn: `${ACCESS_TOKEN_TTL_SECONDS}s`,
+      jwtid: randomUUID(),
+    });
+    const refreshToken = this.jwtService.sign(payload, {
+      expiresIn: `${REFRESH_TOKEN_TTL_SECONDS}s`,
+      jwtid: randomUUID(),
+    });
     return { accessToken, refreshToken };
+  }
+
+  async refreshSession(refreshToken: string, response?: Response) {
+    let payload: AuthPayloadDto;
+
+    try {
+      payload = await this.jwtService.verifyAsync<AuthPayloadDto>(refreshToken);
+    } catch {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+
+    const session = await this.db
+      .selectFrom('auth.sessions')
+      .selectAll()
+      .where('id', '=', payload.session_id)
+      .executeTakeFirst();
+
+    if (!session || session.revoked_at || session.user_id !== payload.sub) {
+      throw new UnauthorizedException('Invalid refresh session');
+    }
+
+    const isCurrentRefreshToken = await this.compareRefreshToken(
+      refreshToken,
+      session.refresh_token_hash,
+    );
+
+    if (!isCurrentRefreshToken) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    const profile = await this.getProfile(session.user_id);
+    const tokenPayload = {
+      username: profile.username,
+      sub: profile.id,
+      session_id: session.id,
+      role: profile.role,
+    };
+    const tokenPair = this.generateTokenPair(tokenPayload);
+    const refreshTokenHash = await this.hashRefreshToken(tokenPair.refreshToken);
+
+    await this.db
+      .updateTable('auth.sessions')
+      .set({
+        refresh_token_hash: refreshTokenHash,
+        last_used_at: new Date(),
+      })
+      .where('id', '=', session.id)
+      .execute();
+
+    if (response) {
+      this.setAccessTokenCookie(response, tokenPair.accessToken);
+      this.setRefreshTokenCookie(response, tokenPair.refreshToken);
+    }
+
+    return {
+      ...tokenPair,
+      user: profile,
+    };
   }
 
   async getProfile(userId: string) {
@@ -202,5 +267,17 @@ export class AuthService {
       league_id: leagueId,
       hasLeagueConfigured,
     };
+  }
+
+  private async hashRefreshToken(refreshToken: string) {
+    return bcrypt.hash(this.digestRefreshToken(refreshToken), 10);
+  }
+
+  private async compareRefreshToken(refreshToken: string, refreshTokenHash: string) {
+    return bcrypt.compare(this.digestRefreshToken(refreshToken), refreshTokenHash);
+  }
+
+  private digestRefreshToken(refreshToken: string) {
+    return createHash('sha256').update(refreshToken).digest('hex');
   }
 }

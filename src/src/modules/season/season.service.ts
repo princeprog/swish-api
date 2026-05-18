@@ -1,5 +1,5 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
-import { Kysely } from 'node_modules/kysely/dist/kysely';
+import type { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
 import { CreateSeasonDto } from './dto/create-season.dto';
 import { getUserLeagueMembership } from '../league/league-membership';
