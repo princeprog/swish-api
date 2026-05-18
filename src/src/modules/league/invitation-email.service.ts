@@ -14,12 +14,12 @@ export class InvitationEmailService {
   private readonly logger = new Logger(InvitationEmailService.name);
 
   async sendInvitationEmail(input: InvitationEmailInput) {
-    const transportMode = process.env.EMAIL_TRANSPORT ?? (process.env.NODE_ENV === 'production' ? 'smtp' : 'console');
-    const host = process.env.SMTP_HOST;
-    const port = process.env.SMTP_PORT;
-    const user = process.env.SMTP_USER ?? process.env.SMTP_USERNAME;
-    const pass = process.env.SMTP_PASS ?? process.env.SMTP_PASSWORD;
-    const from = process.env.SMTP_FROM;
+    const transportMode = (process.env.EMAIL_TRANSPORT ?? 'smtp').trim().toLowerCase();
+    const host = process.env.SMTP_HOST?.trim();
+    const port = process.env.SMTP_PORT?.trim();
+    const user = (process.env.SMTP_USER ?? process.env.SMTP_USERNAME)?.trim();
+    const pass = (process.env.SMTP_PASS ?? process.env.SMTP_PASSWORD)?.replace(/\s+/g, '').trim();
+    const from = (process.env.SMTP_FROM ?? user)?.trim();
 
     const subject = `You're invited to join ${input.leagueName}`;
     const expiresText = input.expiresAt.toUTCString();

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { LeagueService } from './league.service';
 import { CreateLeagueDto } from './dto/create-league.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -44,6 +44,12 @@ export class LeagueController {
       page ? Number(page) : 1,
       limit ? Number(limit) : 10,
     );
+  }
+
+  @UseGuards(AuthGuard)
+  @Delete('invitations/:invitationId')
+  revokeInvitation(@Req() req: any, @Param('invitationId') invitationId: string) {
+    return this.leagueInvitationService.revokeInvitation(req.user.sub, invitationId);
   }
 
   @UseGuards(AuthGuard)

@@ -214,6 +214,44 @@ export class LeagueInvitationService {
     };
   }
 
+  async revokeInvitation(userId: string, invitationId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+
+    if (!membership || membership.role !== 'league_admin') {
+      throw new ForbiddenException('Only league admins can revoke invitations.');
+    }
+
+    const invitation = await this.db
+      .selectFrom('league.league_invitations')
+      .select(['id', 'accepted_at', 'revoked_at'])
+      .where('id', '=', invitationId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirstOrThrow();
+
+    if (invitation.accepted_at) {
+      throw new BadRequestException('This invitation has already been accepted.');
+    }
+
+    if (invitation.revoked_at) {
+      throw new BadRequestException('This invitation has already been revoked.');
+    }
+
+    const revokedAt = new Date();
+
+    const revokedInvitation = await this.db
+      .updateTable('league.league_invitations')
+      .set({ revoked_at: revokedAt })
+      .where('id', '=', invitationId)
+      .where('league_id', '=', membership.league_id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return {
+      success: true,
+      invitation: revokedInvitation,
+    };
+  }
+
   private async acceptInviteForUser(invite: InviteRecord, userId: string) {
     await this.db.transaction().execute(async (trx) => {
       await trx
