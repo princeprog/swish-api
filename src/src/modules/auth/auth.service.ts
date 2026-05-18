@@ -1,14 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Inject } from '@nestjs/common';
 import { UpdateAuthDto } from './dto/update-auth.dto';
 import { UsersService } from '../users/users.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 import * as bcrypt from 'bcrypt';
 import { DB } from 'src/database/db';
 import { Kysely } from 'node_modules/kysely/dist/kysely';
-import { Inject } from '@nestjs/common';
 import { AuthPayloadDto } from './dto/auth-payload.dto';
 import { JwtService } from '@nestjs/jwt';
 import type { Response } from 'express';
+import { getUserLeagueMembership } from '../league/league-membership';
+import { CreateAccountFromInviteDto } from './dto/create-account-from-invite.dto';
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60; // 15 minutes
 const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
@@ -18,11 +19,72 @@ export class AuthService {
 
   constructor(private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
-    @Inject('KYSELY_DB') private readonly db: Kysely<DB>
+    @Inject('KYSELY_DB') private readonly db: Kysely<DB>,
   ) { }
 
   async create(createUserDto: CreateUserDto) {
     return this.usersService.create(createUserDto);
+  }
+
+  async createAccountFromInvite(dto: CreateAccountFromInviteDto, response?: Response) {
+    const payload = this.jwtService.verify(dto.invite) as {
+      purpose: 'invite-setup';
+      inviteId: string;
+      email: string;
+    };
+
+    if (payload.purpose !== 'invite-setup') {
+      throw new BadRequestException('Invalid invitation session token.');
+    }
+
+    const invite = await this.db
+      .selectFrom('league.league_invitations')
+      .selectAll()
+      .where('id', '=', payload.inviteId)
+      .where('email', '=', payload.email)
+      .executeTakeFirst();
+
+    if (!invite) {
+      throw new BadRequestException('Invitation not found.');
+    }
+
+    if (invite.accepted_at) {
+      throw new BadRequestException('This invitation has already been used.');
+    }
+
+    if (invite.revoked_at) {
+      throw new BadRequestException('This invitation has been revoked.');
+    }
+
+    if (invite.expires_at.getTime() <= Date.now()) {
+      throw new BadRequestException('This invitation has expired.');
+    }
+
+    const user = await this.usersService.create({
+      email: invite.email,
+      full_name: dto.full_name,
+      password: dto.password,
+    });
+
+    await this.db.transaction().execute(async (trx) => {
+      await trx
+        .insertInto('league.league_members')
+        .values({
+          league_id: invite.league_id,
+          user_id: user.id,
+          role: invite.role,
+        })
+        .onConflict((oc) => oc.column('user_id').doNothing())
+        .execute();
+
+      await trx
+        .updateTable('league.league_invitations')
+        .set({ accepted_at: new Date() })
+        .where('id', '=', invite.id)
+        .execute();
+    });
+
+    return this.login(user, response);
   }
 
   async validateUser(username: string, password: string) {
@@ -34,6 +96,9 @@ export class AuthService {
   }
 
   async login(user: any, response?: Response) {
+    const membership = await getUserLeagueMembership(this.db, user.id);
+    const role = membership?.role ?? 'user';
+    const leagueId = membership?.league_id ?? null;
 
     const refreshTempTokenHash = await bcrypt.hash(`${user.id}-${Date.now()}`, 10);
 
@@ -56,7 +121,7 @@ export class AuthService {
       username: user.username,
       sub: user.id,
       session_id: createSession.id,
-      role: user.role
+      role,
     }
 
     const {accessToken, refreshToken} = this.generateTokenPair(payload);
@@ -72,7 +137,7 @@ export class AuthService {
       this.setRefreshTokenCookie(response, refreshToken);
     }
 
-    const hasLeagueConfigured = user.role === 'league_admin' ? user.league_id !== null : true;
+    const hasLeagueConfigured = Boolean(membership);
 
     return {
       accessToken,
@@ -80,8 +145,8 @@ export class AuthService {
       user: {
         id: user.id,
         username: user.username,
-        role: user.role,
-        league_id: user.league_id,
+        role,
+        league_id: leagueId,
         hasLeagueConfigured,
       },
     };
@@ -124,14 +189,17 @@ export class AuthService {
       throw new Error('User not found');
     }
 
-    const hasLeagueConfigured = user.role === 'league_admin' ? user.league_id !== null : true;
+    const membership = await getUserLeagueMembership(this.db, user.id);
+    const role = membership?.role ?? 'user';
+    const leagueId = membership?.league_id ?? null;
+    const hasLeagueConfigured = Boolean(membership);
 
     return {
       id: user.id,
       username: user.username,
       email: user.email,
-      role: user.role,
-      league_id: user.league_id,
+      role,
+      league_id: leagueId,
       hasLeagueConfigured,
     };
   }

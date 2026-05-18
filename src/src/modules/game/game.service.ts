@@ -3,19 +3,16 @@ import { Kysely } from 'node_modules/kysely/dist/kysely';
 import { DB } from 'src/database/db';
 import { CreateGameDto } from './dto/create-game.dto';
 import { UpdateGameScoreDto } from './dto/update-game-score.dto';
+import { getUserLeagueMembership } from '../league/league-membership';
 
 @Injectable()
 export class GameService {
   constructor(@Inject('KYSELY_DB') private readonly db: Kysely<DB>) {}
 
   async create(createGameDto: CreateGameDto, userId: string) {
-    const user = await this.db
-      .selectFrom('auth.users')
-      .select('league_id')
-      .where('id', '=', userId as any)
-      .executeTakeFirst();
+    const membership = await getUserLeagueMembership(this.db, userId);
 
-    if (!user || user.league_id === null) {
+    if (!membership) {
       throw new UnauthorizedException('User has no league configured.');
     }
 
@@ -24,7 +21,7 @@ export class GameService {
       .selectFrom('league.Season')
       .select('id')
       .where('id', '=', createGameDto.season_id)
-      .where('league_id', '=', user.league_id)
+      .where('league_id', '=', membership.league_id)
       .executeTakeFirst();
 
     if (!season) {
@@ -54,13 +51,9 @@ export class GameService {
   }
 
   async findAll(seasonId: number, userId: string) {
-    const user = await this.db
-      .selectFrom('auth.users')
-      .select('league_id')
-      .where('id', '=', userId as any)
-      .executeTakeFirst();
+    const membership = await getUserLeagueMembership(this.db, userId);
 
-    if (!user || user.league_id === null) {
+    if (!membership) {
       return [];
     }
 
@@ -95,13 +88,9 @@ export class GameService {
   }
 
   async updateScore(gameId: number, updateScoreDto: UpdateGameScoreDto, userId: string) {
-    const user = await this.db
-      .selectFrom('auth.users')
-      .select('league_id')
-      .where('id', '=', userId as any)
-      .executeTakeFirst();
+    const membership = await getUserLeagueMembership(this.db, userId);
 
-    if (!user || user.league_id === null) {
+    if (!membership) {
       throw new UnauthorizedException('User has no league configured.');
     }
 
@@ -111,7 +100,7 @@ export class GameService {
       .innerJoin('league.Season as s', 's.id', 'g.season_id')
       .select('g.id')
       .where('g.id', '=', gameId as any)
-      .where('s.league_id', '=', user.league_id)
+      .where('s.league_id', '=', membership.league_id)
       .executeTakeFirst();
 
     if (!game) {
@@ -134,13 +123,9 @@ export class GameService {
   }
 
   async delete(gameId: number, userId: string) {
-    const user = await this.db
-      .selectFrom('auth.users')
-      .select('league_id')
-      .where('id', '=', userId as any)
-      .executeTakeFirst();
+    const membership = await getUserLeagueMembership(this.db, userId);
 
-    if (!user || user.league_id === null) {
+    if (!membership) {
       throw new UnauthorizedException('User has no league configured.');
     }
 
@@ -150,7 +135,7 @@ export class GameService {
       .innerJoin('league.Season as s', 's.id', 'g.season_id')
       .select('g.id')
       .where('g.id', '=', gameId as any)
-      .where('s.league_id', '=', user.league_id)
+      .where('s.league_id', '=', membership.league_id)
       .executeTakeFirst();
 
     if (!game) {

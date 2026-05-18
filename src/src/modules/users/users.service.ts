@@ -3,22 +3,24 @@ import { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
 import { CreateUserDto } from './dto/create-user.dto';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 @Injectable()
 export class UsersService {
   constructor(@Inject('KYSELY_DB') private readonly db: Kysely<DB>) { }
 
   async create(createUserDto: CreateUserDto) {
-    const { email, username, password } = createUserDto;
+    const { email, username, full_name, password } = createUserDto;
     const password_hash = await bcrypt.hash(password, 10);
+    const resolvedUsername = await this.resolveUsername(username, email, full_name ?? undefined);
 
     try {
       const user = await this.db
         .insertInto('auth.users')
         .values({
           email,
-          username,
+          username: resolvedUsername,
+          full_name: full_name ?? null,
           password_hash,
-          role: 'user',
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -55,6 +57,10 @@ export class UsersService {
     return this.db.selectFrom('auth.users').selectAll().execute();
   }
 
+  async findByEmail(email: string) {
+    return this.db.selectFrom('auth.users').selectAll().where('email', '=', email).executeTakeFirst();
+  }
+
   private isUniqueConstraintViolation(
     error: unknown,
   ): error is { code?: string; constraint?: string } {
@@ -67,5 +73,42 @@ export class UsersService {
       typeof error.code === 'string' &&
       error.code === '23505'
     );
+  }
+
+  private async resolveUsername(
+    username: string | undefined,
+    email: string,
+    fullName?: string,
+  ) {
+    const base =
+      (username && username.trim()) ||
+      (fullName && this.slugify(fullName)) ||
+      this.slugify(email.split('@')[0] ?? 'user');
+
+    let candidate = base;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const existing = await this.db
+        .selectFrom('auth.users')
+        .select('id')
+        .where('username', '=', candidate)
+        .executeTakeFirst();
+
+      if (!existing) {
+        return candidate;
+      }
+
+      candidate = `${base}-${randomBytes(2).toString('hex')}`;
+    }
+
+    return `${base}-${randomBytes(3).toString('hex')}`;
+  }
+
+  private slugify(value: string) {
+    return value
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 90);
   }
 }

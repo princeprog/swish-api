@@ -3,26 +3,23 @@ import { Kysely } from 'node_modules/kysely/dist/kysely';
 import { DB } from 'src/database/db';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { CreateRosterPlayerDto } from './dto/create-roster-player.dto';
+import { getUserLeagueMembership } from '../league/league-membership';
 
 @Injectable()
 export class TeamService {
   constructor(@Inject('KYSELY_DB') private readonly db: Kysely<DB>) {}
 
   async create(createTeamDto: CreateTeamDto, userId: string) {
-    const user = await this.db
-      .selectFrom('auth.users')
-      .select('league_id')
-      .where('id', '=', userId as any)
-      .executeTakeFirst();
+    const membership = await getUserLeagueMembership(this.db, userId);
 
-    if (!user || user.league_id === null) {
+    if (!membership) {
       throw new UnauthorizedException('User has no league configured.');
     }
 
     const team = await this.db
       .insertInto('league.Teams')
       .values({
-        league_id: user.league_id,
+        league_id: membership.league_id,
         name: createTeamDto.name,
         abbreviation: createTeamDto.abbreviation,
         coach_name: createTeamDto.coach_name,
@@ -41,20 +38,16 @@ export class TeamService {
   }
 
   async findAll(userId: string) {
-    const user = await this.db
-      .selectFrom('auth.users')
-      .select('league_id')
-      .where('id', '=', userId as any)
-      .executeTakeFirst();
+    const membership = await getUserLeagueMembership(this.db, userId);
 
-    if (!user || user.league_id === null) {
+    if (!membership) {
       return [];
     }
 
     return this.db
       .selectFrom('league.Teams')
       .selectAll()
-      .where('league_id', '=', user.league_id)
+      .where('league_id', '=', membership.league_id)
       .orderBy('name', 'asc')
       .execute();
   }

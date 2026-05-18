@@ -2,11 +2,14 @@ import { Module } from '@nestjs/common';
 import { LeagueService } from './league.service';
 import { LeagueController } from './league.controller';
 import { AuthModule } from '../auth/auth.module';
+import { UsersModule } from '../users/users.module';
+import { LeagueInvitationService } from './league-invitation.service';
+import { InvitationEmailService } from './invitation-email.service';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, UsersModule],
   controllers: [LeagueController],
-  providers: [LeagueService],
+  providers: [LeagueService, LeagueInvitationService, InvitationEmailService],
 })
 export class LeagueModule {}
 

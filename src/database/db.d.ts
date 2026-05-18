@@ -37,12 +37,9 @@ export interface AuthSessions {
 export interface AuthUsers {
   created_at: Generated<Timestamp>;
   email: string;
+  full_name: string | null;
   id: Generated<string>;
-  league_id: number | null;
   password_hash: string;
-  player_id: Int8 | null;
-  role: string;
-  team_id: number | null;
   updated_at: Generated<Timestamp>;
   username: string;
 }
@@ -118,6 +115,26 @@ export interface LeagueLeague {
   rules_config: Json;
 }
 
+export interface LeagueLeagueInvitations {
+  accepted_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  email: string;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  league_id: number;
+  revoked_at: Timestamp | null;
+  role: string;
+  token_hash: string;
+}
+
+export interface LeagueLeagueMembers {
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  league_id: number;
+  role: string;
+  user_id: string;
+}
+
 export interface LeagueSeason {
   end_date: Timestamp;
   id: Generated<number>;
@@ -175,6 +192,8 @@ export interface DB {
   "game.GameStats": GameGameStats;
   "game.GameSummary": GameGameSummary;
   "league.League": LeagueLeague;
+  "league.league_invitations": LeagueLeagueInvitations;
+  "league.league_members": LeagueLeagueMembers;
   "league.Season": LeagueSeason;
   "league.SeasonTeam": LeagueSeasonTeam;
   "league.Teams": LeagueTeams;

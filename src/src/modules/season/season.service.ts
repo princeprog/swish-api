@@ -2,20 +2,16 @@ import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Kysely } from 'node_modules/kysely/dist/kysely';
 import { DB } from 'src/database/db';
 import { CreateSeasonDto } from './dto/create-season.dto';
+import { getUserLeagueMembership } from '../league/league-membership';
 
 @Injectable()
 export class SeasonService {
   constructor(@Inject('KYSELY_DB') private readonly db: Kysely<DB>) {}
 
   async create(createSeasonDto: CreateSeasonDto, userId: string) {
-    // 1. Fetch user to find their associated league_id
-    const user = await this.db
-      .selectFrom('auth.users')
-      .select('league_id')
-      .where('id', '=', userId as any)
-      .executeTakeFirst();
+    const membership = await getUserLeagueMembership(this.db, userId);
 
-    if (!user || user.league_id === null) {
+    if (!membership) {
       throw new UnauthorizedException('User has no league configured yet.');
     }
 
@@ -23,7 +19,7 @@ export class SeasonService {
     const season = await this.db
       .insertInto('league.Season')
       .values({
-        league_id: user.league_id,
+        league_id: membership.league_id,
         name: createSeasonDto.name,
         start_date: createSeasonDto.start_date as any,
         end_date: createSeasonDto.end_date as any,
@@ -40,34 +36,24 @@ export class SeasonService {
   }
 
   async findForLeague(userId: string) {
-    // Fetch user to find their associated league_id
-    const user = await this.db
-      .selectFrom('auth.users')
-      .select('league_id')
-      .where('id', '=', userId as any)
-      .executeTakeFirst();
+    const membership = await getUserLeagueMembership(this.db, userId);
 
-    if (!user || user.league_id === null) {
+    if (!membership) {
       return [];
     }
 
     return this.db
       .selectFrom('league.Season')
       .selectAll()
-      .where('league_id', '=', user.league_id)
+      .where('league_id', '=', membership.league_id)
       .orderBy('start_date', 'desc')
       .execute();
   }
 
   async findOne(id: number, userId: string) {
-    // Fetch user to find their associated league_id
-    const user = await this.db
-      .selectFrom('auth.users')
-      .select('league_id')
-      .where('id', '=', userId as any)
-      .executeTakeFirst();
+    const membership = await getUserLeagueMembership(this.db, userId);
 
-    if (!user || user.league_id === null) {
+    if (!membership) {
       throw new UnauthorizedException('User has no league configured.');
     }
 
@@ -75,7 +61,7 @@ export class SeasonService {
       .selectFrom('league.Season')
       .selectAll()
       .where('id', '=', id)
-      .where('league_id', '=', user.league_id)
+      .where('league_id', '=', membership.league_id)
       .executeTakeFirst();
   }
 }

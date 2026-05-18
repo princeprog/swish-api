@@ -3,6 +3,7 @@ import { AuthService } from './auth.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 import { AuthGuard } from './auth.guard';
 import type { Response } from 'express';
+import { CreateAccountFromInviteDto } from './dto/create-account-from-invite.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -24,6 +25,14 @@ export class AuthController {
   async getMe(@Req() req: any) {
     const userId = req.user.sub;
     return this.authService.getProfile(userId);
+  }
+
+  @Post('create-account-from-invite')
+  async createAccountFromInvite(
+    @Body() dto: CreateAccountFromInviteDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.authService.createAccountFromInvite(dto, res);
   }
 }
 
