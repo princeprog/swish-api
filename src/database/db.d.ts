@@ -217,6 +217,32 @@ export interface LeagueTeams {
   user_id: string;
 }
 
+export interface LeagueTeamStaff {
+  created_at: Generated<Timestamp>;
+  created_by_user_id: string | null;
+  email: string | null;
+  full_name: string;
+  id: Generated<Int8>;
+  league_id: number;
+  phone: string | null;
+  role: string;
+  season_id: number;
+  team_id: number;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface LeagueTeamStaffRequiredRoles {
+  created_at: Generated<Timestamp>;
+  division_id: number | null;
+  id: Generated<Int8>;
+  is_required: Generated<boolean>;
+  label: string;
+  league_id: number;
+  role: string;
+  season_id: number | null;
+  sort_order: Generated<number>;
+}
+
 export interface PlayerPlayer {
   date_of_birth: Timestamp;
   full_name: string;
@@ -254,6 +280,8 @@ export interface DB {
   "league.team_compliance_items": LeagueTeamComplianceItems;
   "league.team_compliance_status": LeagueTeamComplianceStatus;
   "league.team_manager_teams": LeagueTeamManagerTeams;
+  "league.team_staff": LeagueTeamStaff;
+  "league.team_staff_required_roles": LeagueTeamStaffRequiredRoles;
   "league.Teams": LeagueTeams;
   "player.Player": PlayerPlayer;
   "player.Roster": PlayerRoster;

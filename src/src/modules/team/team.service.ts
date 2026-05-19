@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import type { Kysely } from 'kysely';
+import { sql } from 'kysely';
 import { DB } from 'src/database/db';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { CreateRosterPlayerDto } from './dto/create-roster-player.dto';
@@ -380,6 +381,139 @@ export class TeamService {
       .where('season_id', '=', seasonId)
       .where('team_id', '=', teamId)
       .execute();
+    return { success: true };
+  }
+
+  private async assertCanManageTeam(teamId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+
+    const team = await this.db
+      .selectFrom('league.Teams')
+      .select(['id', 'league_id', 'user_id'])
+      .where('id', '=', teamId)
+      .executeTakeFirst();
+
+    if (!team || Number(team.league_id) !== Number(membership.league_id)) {
+      throw new NotFoundException('Team not found in your league.');
+    }
+
+    if (membership.role === 'team_manager') {
+      const assigned = await this.db
+        .selectFrom('league.team_manager_teams')
+        .select(['team_id'])
+        .where('league_id', '=', membership.league_id)
+        .where('user_id', '=', userId as any)
+        .where('team_id', '=', teamId)
+        .executeTakeFirst();
+
+      if (!assigned && team.user_id !== userId) {
+        throw new ForbiddenException('Team managers can only manage their assigned teams.');
+      }
+    }
+
+    return { membership, team };
+  }
+
+  async listTeamStaff(teamId: number, seasonId: number, userId: string) {
+    const { membership } = await this.assertCanManageTeam(teamId, userId);
+
+    // Allow any league member to view staff for teams in their league.
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+    if (!season) throw new NotFoundException('Season not found.');
+
+    return this.db
+      .selectFrom('league.team_staff')
+      .selectAll()
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .orderBy('role', 'asc')
+      .orderBy('full_name', 'asc')
+      .execute();
+  }
+
+  async addTeamStaff(teamId: number, dto: any, userId: string) {
+    const { membership } = await this.assertCanManageTeam(teamId, userId);
+
+    const role = String(dto.role ?? '').trim();
+    const full_name = String(dto.full_name ?? '').trim();
+    if (!dto.season_id) throw new BadRequestException('season_id is required.');
+    if (!role) throw new BadRequestException('role is required.');
+    if (!full_name) throw new BadRequestException('full_name is required.');
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id', 'status'])
+      .where('id', '=', Number(dto.season_id))
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+    if (!season) throw new NotFoundException('Season not found.');
+    if (Number(season.status) === 3) throw new BadRequestException('Cannot modify staff for an archived season.');
+
+    const staff = await this.db
+      .insertInto('league.team_staff')
+      .values({
+        league_id: membership.league_id,
+        season_id: Number(dto.season_id),
+        team_id: teamId,
+        role,
+        full_name,
+        email: dto.email ?? null,
+        phone: dto.phone ?? null,
+        created_by_user_id: userId as any,
+      } as any)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, staff };
+  }
+
+  async updateTeamStaff(teamId: number, staffId: number, dto: any, userId: string) {
+    const { membership } = await this.assertCanManageTeam(teamId, userId);
+
+    const existing = await this.db
+      .selectFrom('league.team_staff')
+      .select(['id', 'season_id'])
+      .where('id', '=', staffId as any)
+      .where('team_id', '=', teamId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+    if (!existing) throw new NotFoundException('Staff member not found.');
+
+    const patch: any = {};
+    if (dto.role !== undefined) patch.role = String(dto.role).trim();
+    if (dto.full_name !== undefined) patch.full_name = String(dto.full_name).trim();
+    if (dto.email !== undefined) patch.email = dto.email ?? null;
+    if (dto.phone !== undefined) patch.phone = dto.phone ?? null;
+    patch.updated_at = sql`now()` as any;
+
+    await this.db
+      .updateTable('league.team_staff')
+      .set(patch)
+      .where('id', '=', staffId as any)
+      .where('team_id', '=', teamId)
+      .where('league_id', '=', membership.league_id)
+      .execute();
+
+    return { success: true };
+  }
+
+  async removeTeamStaff(teamId: number, staffId: number, userId: string) {
+    const { membership } = await this.assertCanManageTeam(teamId, userId);
+
+    await this.db
+      .deleteFrom('league.team_staff')
+      .where('id', '=', staffId as any)
+      .where('team_id', '=', teamId)
+      .where('league_id', '=', membership.league_id)
+      .execute();
+
     return { success: true };
   }
 
