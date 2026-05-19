@@ -25,15 +25,40 @@ export class TeamController {
   getRoster(
     @Param('id') id: string,
     @Query('season_id') seasonId: string,
+    @Req() req: any,
   ) {
-    return this.teamService.getRoster(+id, +seasonId);
+    return this.teamService.getRoster(+id, +seasonId, req.user.sub);
+  }
+
+  @Get('readiness/season')
+  getSeasonTeamReadiness(@Query('season_id') seasonId: string, @Req() req: any) {
+    return this.teamService.getSeasonTeamReadiness(+seasonId, req.user.sub);
   }
 
   @Post(':id/roster')
   addRosterPlayer(
     @Param('id') id: string,
     @Body() dto: CreateRosterPlayerDto,
+    @Req() req: any,
   ) {
-    return this.teamService.addRosterPlayer(+id, dto);
+    return this.teamService.addRosterPlayer(+id, dto, req.user.sub);
+  }
+
+  @Post(':id/roster/finalize')
+  finalizeRoster(
+    @Param('id') id: string,
+    @Query('season_id') seasonId: string,
+    @Req() req: any,
+  ) {
+    return this.teamService.finalizeRoster(+id, +seasonId, req.user.sub);
+  }
+
+  @Post(':id/roster/reopen')
+  reopenRoster(
+    @Param('id') id: string,
+    @Query('season_id') seasonId: string,
+    @Req() req: any,
+  ) {
+    return this.teamService.reopenRoster(+id, +seasonId, req.user.sub);
   }
 }

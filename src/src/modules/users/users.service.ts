@@ -1,5 +1,5 @@
 import { ConflictException, Inject, Injectable } from '@nestjs/common';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import { DB } from 'src/database/db';
 import { CreateUserDto } from './dto/create-user.dto';
 import * as bcrypt from 'bcrypt';
@@ -58,7 +58,12 @@ export class UsersService {
   }
 
   async findByEmail(email: string) {
-    return this.db.selectFrom('auth.users').selectAll().where('email', '=', email).executeTakeFirst();
+    const normalized = email.trim().toLowerCase();
+    return this.db
+      .selectFrom('auth.users')
+      .selectAll()
+      .where(sql<string>`lower(email)`, '=', normalized)
+      .executeTakeFirst();
   }
 
   private isUniqueConstraintViolation(

@@ -4,7 +4,7 @@ import { UsersService } from '../users/users.service';
 import { CreateUserDto } from '../users/dto/create-user.dto';
 import * as bcrypt from 'bcrypt';
 import { DB } from 'src/database/db';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import { AuthPayloadDto } from './dto/auth-payload.dto';
 import { JwtService } from '@nestjs/jwt';
 import type { Response } from 'express';
@@ -38,11 +38,13 @@ export class AuthService {
       throw new BadRequestException('Invalid invitation session token.');
     }
 
+    const normalizedEmail = payload.email.trim().toLowerCase();
+
     const invite = await this.db
       .selectFrom('league.league_invitations')
       .selectAll()
       .where('id', '=', payload.inviteId)
-      .where('email', '=', payload.email)
+      .where(sql<string>`lower(email)`, '=', normalizedEmail)
       .executeTakeFirst();
 
     if (!invite) {
@@ -62,7 +64,7 @@ export class AuthService {
     }
 
     const user = await this.usersService.create({
-      email: invite.email,
+      email: invite.email.trim().toLowerCase(),
       full_name: dto.full_name,
       password: dto.password,
     });

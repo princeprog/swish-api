@@ -15,6 +15,7 @@ import { LogSubstitutionDto } from './dto/log-substitution.dto';
 import { ClockActionDto } from './dto/clock-action.dto';
 import { FinalizeGameDto } from './dto/finalize-game.dto';
 import { PublishGameSummaryDto } from './dto/publish-game-summary.dto';
+import { SetGameAwardsDto } from './dto/set-game-awards.dto';
 
 @Injectable()
 export class GameService {
@@ -41,6 +42,7 @@ export class GameService {
     if (Number(season.status) === 3) {
       throw new BadRequestException('Cannot modify games for an archived season.');
     }
+    await this.ensureScheduleReadiness(createGameDto.season_id, membership.league_id);
 
     const game = await this.db
       .insertInto('game.Game')
@@ -227,6 +229,7 @@ export class GameService {
     if (Number(season.status) === 3) {
       throw new BadRequestException('Cannot modify games for an archived season.');
     }
+    await this.ensureScheduleReadiness(dto.season_id, membership.league_id);
 
     const teams = await this.db
       .selectFrom('league.Teams')
@@ -295,6 +298,12 @@ export class GameService {
       generatedCount: insertedGames.length,
       games: insertedGames,
     };
+  }
+
+  async getScheduleReadiness(seasonId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    return this.computeScheduleReadiness(seasonId, membership.league_id);
   }
 
   async initializeGame(gameId: number, dto: InitializeGameDto, userId: string) {
@@ -852,6 +861,91 @@ export class GameService {
     };
   }
 
+  async setGameAwards(gameId: number, dto: SetGameAwardsDto, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    const game = await this.db
+      .selectFrom('game.Game as g')
+      .innerJoin('league.Season as s', 's.id', 'g.season_id')
+      .select(['g.id', 'g.home_team', 'g.away_team', 'g.home_score', 'g.away_score', 'g.status', 'g.season_id'])
+      .where('g.id', '=', gameId as any)
+      .where('s.league_id', '=', membership.league_id)
+      .executeTakeFirst();
+    if (!game) throw new NotFoundException('Match not found or does not belong to your league.');
+    if (Number(game.status) !== 2) throw new BadRequestException('Awards can only be assigned after game finalization.');
+
+    const winningTeamId =
+      Number(game.home_score) >= Number(game.away_score) ? Number(game.home_team) : Number(game.away_team);
+    const losingTeamId =
+      Number(game.home_score) >= Number(game.away_score) ? Number(game.away_team) : Number(game.home_team);
+
+    const bpogRoster = await this.db
+      .selectFrom('player.Roster')
+      .select(['player_id'])
+      .where('season_id', '=', Number(game.season_id))
+      .where('team_id', '=', winningTeamId)
+      .where('player_id', '=', dto.bpog_player_id as any)
+      .executeTakeFirst();
+    if (!bpogRoster) throw new BadRequestException('BPOG must be selected from the winning roster.');
+
+    if (dto.mvp_losing_player_id) {
+      const losingRoster = await this.db
+        .selectFrom('player.Roster')
+        .select(['player_id'])
+        .where('season_id', '=', Number(game.season_id))
+        .where('team_id', '=', losingTeamId)
+        .where('player_id', '=', dto.mvp_losing_player_id as any)
+        .executeTakeFirst();
+      if (!losingRoster) throw new BadRequestException('Losing MVP must be selected from the losing roster.');
+    }
+
+    await this.db.transaction().execute(async (trx) => {
+      await trx.deleteFrom('game.Award').where('game_id', '=', gameId as any).execute();
+      await trx.insertInto('game.Award').values({
+        game_id: gameId as any,
+        season_id: Number(game.season_id),
+        player_id: dto.bpog_player_id as any,
+        award_type: 'BPOG',
+        description: 'Best Player of the Game',
+      }).execute();
+      if (dto.mvp_losing_player_id) {
+        await trx.insertInto('game.Award').values({
+          game_id: gameId as any,
+          season_id: Number(game.season_id),
+          player_id: dto.mvp_losing_player_id as any,
+          award_type: 'MVP_LOSER',
+          description: 'MVP from losing team',
+        }).execute();
+      }
+    });
+
+    return { success: true };
+  }
+
+  async getSeasonAwardsLeaderboard(seasonId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    const rows = await this.db
+      .selectFrom('game.Award as a')
+      .innerJoin('player.Player as p', 'p.id', 'a.player_id')
+      .innerJoin('game.Game as g', 'g.id', 'a.game_id')
+      .innerJoin('league.Season as s', 's.id', 'g.season_id')
+      .select(['a.player_id', 'p.full_name', 'a.award_type'])
+      .where('a.season_id', '=', seasonId)
+      .where('s.league_id', '=', membership.league_id)
+      .execute();
+
+    const map = new Map<number, { player_id: number; full_name: string; bpog_count: number; mvp_loser_count: number }>();
+    for (const r of rows) {
+      const id = Number(r.player_id);
+      if (!map.has(id)) map.set(id, { player_id: id, full_name: r.full_name, bpog_count: 0, mvp_loser_count: 0 });
+      const v = map.get(id)!;
+      if (r.award_type === 'BPOG') v.bpog_count += 1;
+      if (r.award_type === 'MVP_LOSER') v.mvp_loser_count += 1;
+    }
+    return Array.from(map.values()).sort((a, b) => b.bpog_count - a.bpog_count || b.mvp_loser_count - a.mvp_loser_count);
+  }
+
   private validateRoundRobinInput(dto: GenerateRoundRobinDto) {
     if (!dto.season_id || dto.season_id <= 0) {
       throw new BadRequestException('season_id is required.');
@@ -1022,5 +1116,75 @@ export class GameService {
     if (!game) throw new NotFoundException('Match not found or does not belong to your league.');
     if (Number(game.season_status) === 3) throw new BadRequestException('Cannot modify games for an archived season.');
     return game;
+  }
+
+  private async ensureScheduleReadiness(seasonId: number, leagueId: number) {
+    const readiness = await this.computeScheduleReadiness(seasonId, leagueId);
+    if (!readiness.ready) {
+      throw new BadRequestException(readiness.message);
+    }
+  }
+
+  private async computeScheduleReadiness(seasonId: number, leagueId: number) {
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', leagueId)
+      .executeTakeFirst();
+    if (!season) throw new NotFoundException('Season not found or does not belong to your league.');
+
+    const league = await this.db
+      .selectFrom('league.League')
+      .select(['rules_config'])
+      .where('id', '=', leagueId)
+      .executeTakeFirst();
+    const minRequired = Number((league?.rules_config as any)?.min_roster_players ?? 5);
+
+    const seasonTeams = await this.db
+      .selectFrom('league.SeasonTeam as st')
+      .innerJoin('league.Teams as t', 't.id', 'st.team_id')
+      .select(['t.id', 't.name', 'st.is_finalized'])
+      .where('st.season_id', '=', seasonId)
+      .execute();
+    if (seasonTeams.length < 2) {
+      return { ready: false, message: 'Add at least 2 teams to this season before creating schedules.', rosterSummary: [] };
+    }
+
+    const rosterSummary: Array<{ team_id: number; team_name: string; active_roster_count: number; min_required: number; is_complete: boolean; is_finalized: boolean; ready: boolean; reasons: string[] }> = [];
+    for (const team of seasonTeams) {
+      const activeCount = await this.db
+        .selectFrom('player.Roster')
+        .select((eb) => eb.fn.count('id').as('count'))
+        .where('season_id', '=', seasonId)
+        .where('team_id', '=', team.id)
+        .where('status', '=', 'Active')
+        .executeTakeFirstOrThrow();
+      const count = Number((activeCount as any).count ?? 0);
+      const isComplete = count >= minRequired;
+      const isFinalized = Boolean((team as any).is_finalized);
+      const reasons: string[] = [];
+      if (!isComplete) reasons.push('insufficient_active_players');
+      if (!isFinalized) reasons.push('not_finalized');
+      rosterSummary.push({
+        team_id: team.id,
+        team_name: team.name,
+        active_roster_count: count,
+        min_required: minRequired,
+        is_complete: isComplete,
+        is_finalized: isFinalized,
+        ready: isComplete && isFinalized,
+        reasons,
+      });
+    }
+    const insufficient = rosterSummary.filter((r) => !r.ready);
+    if (insufficient.length > 0) {
+      return {
+        ready: false,
+        message: 'All season teams must have at least 5 active roster players before creating schedules.',
+        rosterSummary,
+      };
+    }
+    return { ready: true, message: 'Schedule can be created.', rosterSummary };
   }
 }

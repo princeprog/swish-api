@@ -147,8 +147,19 @@ export interface LeagueSeason {
 
 export interface LeagueSeasonTeam {
   bracket: string;
+  finalized_at: Timestamp | null;
+  finalized_by_user_id: string | null;
+  is_finalized: Generated<boolean>;
+  min_required_players_snapshot: number | null;
   season_id: number;
   team_id: number;
+}
+
+export interface LeagueTeamManagerTeams {
+  created_at: Generated<Timestamp>;
+  league_id: number;
+  team_id: number;
+  user_id: string;
 }
 
 export interface LeagueTeams {
@@ -196,6 +207,7 @@ export interface DB {
   "league.league_members": LeagueLeagueMembers;
   "league.Season": LeagueSeason;
   "league.SeasonTeam": LeagueSeasonTeam;
+  "league.team_manager_teams": LeagueTeamManagerTeams;
   "league.Teams": LeagueTeams;
   "player.Player": PlayerPlayer;
   "player.Roster": PlayerRoster;

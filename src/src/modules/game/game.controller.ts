@@ -13,6 +13,7 @@ import { LogSubstitutionDto } from './dto/log-substitution.dto';
 import { ClockActionDto } from './dto/clock-action.dto';
 import { FinalizeGameDto } from './dto/finalize-game.dto';
 import { PublishGameSummaryDto } from './dto/publish-game-summary.dto';
+import { SetGameAwardsDto } from './dto/set-game-awards.dto';
 
 @UseGuards(AuthGuard)
 @Controller('game')
@@ -35,6 +36,11 @@ export class GameController {
   findAll(@Query('seasonId') seasonId: string, @Req() req: any) {
     const userId = req.user.sub;
     return this.gameService.findAll(+seasonId, userId);
+  }
+
+  @Get('schedule-readiness')
+  getScheduleReadiness(@Query('seasonId') seasonId: string, @Req() req: any) {
+    return this.gameService.getScheduleReadiness(+seasonId, req.user.sub);
   }
 
   @Patch(':id/score')
@@ -118,5 +124,15 @@ export class GameController {
   @Get(':id/summary/public')
   getPublicSummary(@Param('id') id: string) {
     return this.gameService.getPublicGameSummary(+id);
+  }
+
+  @Post(':id/awards')
+  setGameAwards(@Param('id') id: string, @Body() dto: SetGameAwardsDto, @Req() req: any) {
+    return this.gameService.setGameAwards(+id, dto, req.user.sub);
+  }
+
+  @Get('season/:seasonId/awards/leaderboard')
+  getSeasonAwardsLeaderboard(@Param('seasonId') seasonId: string, @Req() req: any) {
+    return this.gameService.getSeasonAwardsLeaderboard(+seasonId, req.user.sub);
   }
 }

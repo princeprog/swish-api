@@ -69,6 +69,36 @@ export class LeagueController {
     return this.leagueService.getMemberRoleSummary(req.user.sub);
   }
 
+  @UseGuards(AuthGuard)
+  @Get('members')
+  listMembers(@Req() req: any) {
+    return this.leagueService.listMembers(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard)
+  @Delete('members/:memberUserId')
+  removeMember(@Req() req: any, @Param('memberUserId') memberUserId: string) {
+    return this.leagueService.removeMember(req.user.sub, memberUserId);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('members/:memberUserId/teams')
+  getMemberTeams(@Req() req: any, @Param('memberUserId') memberUserId: string) {
+    return this.leagueService.getMemberManagedTeams(req.user.sub, memberUserId);
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('members/:memberUserId/teams')
+  setMemberTeams(@Req() req: any, @Param('memberUserId') memberUserId: string, @Body() body: { teamIds: number[] }) {
+    return this.leagueService.setMemberManagedTeams(req.user.sub, memberUserId, body?.teamIds ?? []);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('me/managed-teams')
+  getMyManagedTeams(@Req() req: any) {
+    return this.leagueService.getMyManagedTeams(req.user.sub);
+  }
+
   @Get('invitations/verify')
   async verifyInvitation(@Query('token') token: string, @Res({ passthrough: true }) res: Response) {
     const result = await this.leagueInvitationService.verifyInvitation(token);

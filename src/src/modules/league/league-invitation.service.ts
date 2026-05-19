@@ -137,10 +137,13 @@ export class LeagueInvitationService {
       throw new BadRequestException('This invitation has expired.');
     }
 
-    const existingUser = await this.usersService.findByEmail(invite.email);
+    // Emails can arrive with odd casing/whitespace (copied from email clients, etc.).
+    // Normalize before lookup to avoid mis-routing the user.
+    const normalizedEmail = invite.email.trim().toLowerCase();
+    const existingUser = await this.usersService.findByEmail(normalizedEmail);
 
     if (existingUser) {
-      await this.acceptInviteForUser(invite, existingUser.id);
+      await this.acceptInviteForUser({ ...invite, email: normalizedEmail } as InviteRecord, existingUser.id);
       return {
         action: 'accepted',
         redirectTo: `${this.frontendUrl()}/login?invite=accepted`,
@@ -151,7 +154,7 @@ export class LeagueInvitationService {
       {
         purpose: 'invite-setup',
         inviteId: invite.id,
-        email: invite.email,
+        email: normalizedEmail,
         leagueId: invite.league_id,
         role: invite.role,
       } satisfies InviteClaims,
