@@ -7,6 +7,7 @@ import { CreateRosterPlayerDto } from './dto/create-roster-player.dto';
 import { getUserLeagueMembership } from '../league/league-membership';
 import { GameService } from '../game/game.service';
 import { computeSeasonTeamEligibility } from './team-eligibility';
+import { UpsertComplianceStatusDto } from './dto/upsert-compliance-status.dto';
 
 @Injectable()
 export class TeamService {
@@ -455,6 +456,122 @@ export class TeamService {
       .orderBy('role', 'asc')
       .orderBy('full_name', 'asc')
       .execute();
+  }
+
+  async listTeamCompliance(teamId: number, seasonId: number, userId: string) {
+    const { membership } = await this.assertCanManageTeam(teamId, userId);
+
+    const seasonTeam = await this.db
+      .selectFrom('league.SeasonTeam')
+      .select(['division_id'])
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .executeTakeFirst();
+    if (!seasonTeam) throw new NotFoundException('Team is not assigned to selected season.');
+    const divisionId = seasonTeam.division_id === null ? null : Number(seasonTeam.division_id);
+
+    const items = await this.db
+      .selectFrom('league.team_compliance_items')
+      .select(['id', 'key', 'label', 'category', 'is_required', 'sort_order', 'division_id', 'config', 'archived_at'])
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .where('archived_at', 'is', null)
+      .where('is_required', '=', true)
+      .where((eb) =>
+        eb.or([eb('division_id', 'is', null), eb('division_id', '=', divisionId as any)]),
+      )
+      .orderBy('category', 'asc')
+      .orderBy('sort_order', 'asc')
+      .orderBy('label', 'asc')
+      .execute();
+
+    const statuses = await this.db
+      .selectFrom('league.team_compliance_status')
+      .select(['item_id', 'status', 'notes', 'attachments', 'meta', 'updated_at', 'updated_by_user_id'])
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .execute();
+    const byItem = new Map<number, any>(statuses.map((s: any) => [Number(s.item_id), s]));
+
+    return items.map((it: any) => {
+      const st = byItem.get(Number(it.id));
+      return {
+        ...it,
+        status: st?.status ?? 'pending',
+        notes: st?.notes ?? null,
+        attachments: st?.attachments ?? [],
+        meta: st?.meta ?? {},
+        updated_at: st?.updated_at ?? null,
+        updated_by_user_id: st?.updated_by_user_id ?? null,
+      };
+    });
+  }
+
+  async upsertTeamComplianceStatus(teamId: number, seasonId: number, dto: UpsertComplianceStatusDto, userId: string) {
+    const { membership } = await this.assertCanManageTeam(teamId, userId);
+
+    const item = await this.db
+      .selectFrom('league.team_compliance_items')
+      .select(['id', 'league_id', 'season_id', 'division_id', 'archived_at', 'is_required'])
+      .where('id', '=', dto.item_id as any)
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .executeTakeFirst();
+    if (!item || item.archived_at) throw new NotFoundException('Compliance item not found.');
+
+    // Team managers can only set pending/complete. Waive is admin-only for now.
+    if (dto.status !== 'pending' && dto.status !== 'complete') {
+      throw new BadRequestException('Invalid compliance status.');
+    }
+
+    const existing = await this.db
+      .selectFrom('league.team_compliance_status')
+      .select(['id'])
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .where('item_id', '=', dto.item_id as any)
+      .executeTakeFirst();
+
+    if (!existing) {
+      const inserted = await this.db
+        .insertInto('league.team_compliance_status')
+        .values({
+          league_id: membership.league_id,
+          season_id: seasonId,
+          team_id: teamId,
+          item_id: dto.item_id as any,
+          status: dto.status,
+          notes: dto.notes ?? null,
+          attachments: (dto.attachments ?? []) as any,
+          meta: (dto.meta ?? {}) as any,
+          updated_by_user_id: userId,
+          updated_at: new Date() as any,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return { success: true, status: inserted };
+    }
+
+    const updated = await this.db
+      .updateTable('league.team_compliance_status')
+      .set({
+        status: dto.status,
+        notes: dto.notes ?? null,
+        attachments: (dto.attachments ?? []) as any,
+        meta: (dto.meta ?? {}) as any,
+        updated_by_user_id: userId,
+        updated_at: new Date() as any,
+      })
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .where('item_id', '=', dto.item_id as any)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, status: updated };
   }
 
   async addTeamStaff(teamId: number, dto: any, userId: string) {

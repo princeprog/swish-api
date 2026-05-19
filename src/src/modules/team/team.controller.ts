@@ -5,6 +5,7 @@ import { CreateRosterPlayerDto } from './dto/create-roster-player.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { CreateTeamStaffDto } from './dto/create-team-staff.dto';
 import { UpdateTeamStaffDto } from './dto/update-team-staff.dto';
+import { UpsertComplianceStatusDto } from './dto/upsert-compliance-status.dto';
 
 @UseGuards(AuthGuard)
 @Controller('team')
@@ -30,6 +31,21 @@ export class TeamController {
     @Req() req: any,
   ) {
     return this.teamService.getRoster(+id, +seasonId, req.user.sub);
+  }
+
+  @Get(':id/compliance')
+  listCompliance(@Param('id') id: string, @Query('season_id') seasonId: string, @Req() req: any) {
+    return this.teamService.listTeamCompliance(+id, +seasonId, req.user.sub);
+  }
+
+  @Post(':id/compliance')
+  upsertCompliance(
+    @Param('id') id: string,
+    @Query('season_id') seasonId: string,
+    @Body() dto: UpsertComplianceStatusDto,
+    @Req() req: any,
+  ) {
+    return this.teamService.upsertTeamComplianceStatus(+id, +seasonId, dto, req.user.sub);
   }
 
   @Get('readiness/season')
