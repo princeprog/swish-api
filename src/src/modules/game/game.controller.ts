@@ -38,6 +38,11 @@ export class GameController {
     return this.gameService.findAll(+seasonId, userId);
   }
 
+  @Get(':id')
+  findOne(@Param('id') id: string, @Req() req: any) {
+    return this.gameService.findOne(+id, req.user.sub);
+  }
+
   @Get('schedule-readiness')
   getScheduleReadiness(@Query('seasonId') seasonId: string, @Req() req: any) {
     return this.gameService.getScheduleReadiness(+seasonId, req.user.sub);
@@ -114,6 +119,15 @@ export class GameController {
   @Post(':id/finalize')
   finalizeGame(@Param('id') id: string, @Body() dto: FinalizeGameDto, @Req() req: any) {
     return this.gameService.finalizeGame(+id, dto, req.user.sub);
+  }
+
+  @Post(':id/assign-scorekeeper')
+  assignScorekeeper(
+    @Param('id') id: string,
+    @Body() body: { scorekeeper_user_id: string | null },
+    @Req() req: any,
+  ) {
+    return this.gameService.assignScorekeeper(+id, body?.scorekeeper_user_id ?? null, req.user.sub);
   }
 
   @Post(':id/summary/publish')

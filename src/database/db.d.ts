@@ -62,6 +62,7 @@ export interface GameGame {
   home_team: number;
   id: Generated<Int8>;
   scheduled_at: Timestamp;
+  scorekeeper_user_id: string | null;
   season_id: number;
   status: Int8;
   venue: string;
@@ -145,6 +146,18 @@ export interface LeagueSeason {
   status: Int8;
 }
 
+export interface LeagueSeasonDivision {
+  age_max: number | null;
+  age_min: number | null;
+  code: string;
+  created_at: Generated<Timestamp>;
+  id: Generated<number>;
+  is_open: Generated<boolean>;
+  name: string;
+  season_id: number;
+  sort_order: Generated<number>;
+}
+
 export interface LeagueSeasonTeam {
   bracket: string;
   finalized_at: Timestamp | null;
@@ -206,6 +219,7 @@ export interface DB {
   "league.league_invitations": LeagueLeagueInvitations;
   "league.league_members": LeagueLeagueMembers;
   "league.Season": LeagueSeason;
+  "league.SeasonDivision": LeagueSeasonDivision;
   "league.SeasonTeam": LeagueSeasonTeam;
   "league.team_manager_teams": LeagueTeamManagerTeams;
   "league.Teams": LeagueTeams;

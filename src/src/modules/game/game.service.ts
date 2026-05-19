@@ -21,6 +21,73 @@ import { SetGameAwardsDto } from './dto/set-game-awards.dto';
 export class GameService {
   constructor(@Inject('KYSELY_DB') private readonly db: Kysely<DB>) {}
 
+  private async assertGameAccess(gameId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+
+    if (!membership) {
+      throw new UnauthorizedException('User has no league configured.');
+    }
+
+    const game = await this.db
+      .selectFrom('game.Game as g')
+      .innerJoin('league.Season as s', 's.id', 'g.season_id')
+      .select(['g.id', 'g.scorekeeper_user_id', 's.league_id'])
+      .where('g.id', '=', gameId as any)
+      .executeTakeFirst();
+
+    if (!game || Number((game as any).league_id) !== Number(membership.league_id)) {
+      throw new NotFoundException('Match not found or does not belong to your league.');
+    }
+
+    // Scorekeepers are strictly scoped to assigned games.
+    if (membership.role === 'scorekeeper' && (game as any).scorekeeper_user_id !== userId) {
+      throw new UnauthorizedException('Not authorized to access this match.');
+    }
+
+    return { membership, game };
+  }
+
+  async assignScorekeeper(gameId: number, scorekeeperUserId: string | null, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    if (membership.role !== 'league_admin') {
+      throw new UnauthorizedException('Only league admins can assign scorekeepers.');
+    }
+
+    // Ensure the game belongs to this league.
+    const game = await this.db
+      .selectFrom('game.Game as g')
+      .innerJoin('league.Season as s', 's.id', 'g.season_id')
+      .select(['g.id'])
+      .where('g.id', '=', gameId as any)
+      .where('s.league_id', '=', membership.league_id)
+      .executeTakeFirst();
+
+    if (!game) throw new NotFoundException('Match not found or does not belong to your league.');
+
+    // Optional sanity check: ensure the assignee is a scorekeeper in this league.
+    if (scorekeeperUserId) {
+      const assignee = await this.db
+        .selectFrom('league.league_members')
+        .select(['id'])
+        .where('league_id', '=', membership.league_id)
+        .where('user_id', '=', scorekeeperUserId as any)
+        .where('role', '=', 'scorekeeper')
+        .executeTakeFirst();
+      if (!assignee) {
+        throw new BadRequestException('User is not a scorekeeper member of this league.');
+      }
+    }
+
+    await this.db
+      .updateTable('game.Game')
+      .set({ scorekeeper_user_id: scorekeeperUserId as any })
+      .where('id', '=', gameId as any)
+      .execute();
+
+    return { success: true };
+  }
+
   async create(createGameDto: CreateGameDto, userId: string) {
     const membership = await getUserLeagueMembership(this.db, userId);
 
@@ -66,6 +133,43 @@ export class GameService {
     };
   }
 
+  async findOne(gameId: number, userId: string) {
+    const { membership } = await this.assertGameAccess(gameId, userId);
+
+    const game = await this.db
+      .selectFrom('game.Game as g')
+      .innerJoin('league.Season as s', 's.id', 'g.season_id')
+      .innerJoin('league.Teams as home', 'home.id', 'g.home_team')
+      .innerJoin('league.Teams as away', 'away.id', 'g.away_team')
+      .select([
+        'g.id',
+        'g.season_id',
+        'g.home_team',
+        'g.away_team',
+        'g.scheduled_at',
+        'g.venue',
+        'g.game_type',
+        'g.status',
+        'g.home_score',
+        'g.away_score',
+        'g.scorekeeper_user_id',
+        'home.name as home_team_name',
+        'home.abbreviation as home_team_abbreviation',
+        'home.primary_color as home_team_primary_color',
+        'home.secondary_color as home_team_secondary_color',
+        'away.name as away_team_name',
+        'away.abbreviation as away_team_abbreviation',
+        'away.primary_color as away_team_primary_color',
+        'away.secondary_color as away_team_secondary_color',
+      ])
+      .where('g.id', '=', gameId as any)
+      .where('s.league_id', '=', membership.league_id)
+      .executeTakeFirst();
+
+    if (!game) throw new NotFoundException('Match not found or does not belong to your league.');
+    return game;
+  }
+
   async findAll(seasonId: number, userId: string) {
     const membership = await getUserLeagueMembership(this.db, userId);
 
@@ -74,7 +178,7 @@ export class GameService {
     }
 
     // Return games joined with home/away team details
-    return this.db
+    let q = this.db
       .selectFrom('game.Game as g')
       .innerJoin('league.Teams as home', 'home.id', 'g.home_team')
       .innerJoin('league.Teams as away', 'away.id', 'g.away_team')
@@ -89,6 +193,7 @@ export class GameService {
         'g.status',
         'g.home_score',
         'g.away_score',
+        'g.scorekeeper_user_id',
         'home.name as home_team_name',
         'home.abbreviation as home_team_abbreviation',
         'home.primary_color as home_team_primary_color',
@@ -99,18 +204,17 @@ export class GameService {
         'away.secondary_color as away_team_secondary_color',
       ])
       .where('g.season_id', '=', seasonId)
-      .orderBy('g.scheduled_at', 'asc')
-      .execute();
+
+    if (membership.role === 'scorekeeper') {
+      q = q.where('g.scorekeeper_user_id', '=', userId as any);
+    }
+
+    return q.orderBy('g.scheduled_at', 'asc').execute();
   }
 
   async updateScore(gameId: number, updateScoreDto: UpdateGameScoreDto, userId: string) {
-    const membership = await getUserLeagueMembership(this.db, userId);
+    const { membership } = await this.assertGameAccess(gameId, userId);
 
-    if (!membership) {
-      throw new UnauthorizedException('User has no league configured.');
-    }
-
-    // Verify game exists and belongs to the user's league
     const game = await this.db
       .selectFrom('game.Game as g')
       .innerJoin('league.Season as s', 's.id', 'g.season_id')
@@ -307,8 +411,7 @@ export class GameService {
   }
 
   async initializeGame(gameId: number, dto: InitializeGameDto, userId: string) {
-    const membership = await getUserLeagueMembership(this.db, userId);
-    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    const { membership } = await this.assertGameAccess(gameId, userId);
 
     const game = await this.db
       .selectFrom('game.Game as g')
@@ -403,6 +506,7 @@ export class GameService {
   }
 
   async addScoringEvent(gameId: number, dto: AddScoringEventDto, userId: string) {
+    await this.assertGameAccess(gameId, userId);
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership) throw new UnauthorizedException('User has no league configured.');
     const game = await this.getLeagueGame(gameId, membership.league_id);
@@ -447,6 +551,7 @@ export class GameService {
   }
 
   async listScoringEvents(gameId: number, userId: string) {
+    await this.assertGameAccess(gameId, userId);
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership) throw new UnauthorizedException('User has no league configured.');
     await this.getLeagueGame(gameId, membership.league_id);
@@ -460,6 +565,7 @@ export class GameService {
   }
 
   async removeScoringEvent(gameId: number, eventId: number, dto: RemoveScoringEventDto, userId: string) {
+    await this.assertGameAccess(gameId, userId);
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership) throw new UnauthorizedException('User has no league configured.');
     const game = await this.getLeagueGame(gameId, membership.league_id);
@@ -509,6 +615,7 @@ export class GameService {
   }
 
   async addPlayerStatEvent(gameId: number, dto: AddPlayerStatEventDto, userId: string) {
+    await this.assertGameAccess(gameId, userId);
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership) throw new UnauthorizedException('User has no league configured.');
     const game = await this.getLeagueGame(gameId, membership.league_id);
@@ -535,6 +642,7 @@ export class GameService {
   }
 
   async getPlayerStats(gameId: number, userId: string) {
+    await this.assertGameAccess(gameId, userId);
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership) throw new UnauthorizedException('User has no league configured.');
     await this.getLeagueGame(gameId, membership.league_id);
@@ -624,6 +732,7 @@ export class GameService {
   }
 
   async logSubstitution(gameId: number, dto: LogSubstitutionDto, userId: string) {
+    await this.assertGameAccess(gameId, userId);
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership) throw new UnauthorizedException('User has no league configured.');
     const game = await this.getLeagueGame(gameId, membership.league_id);
@@ -662,6 +771,7 @@ export class GameService {
   }
 
   async clockAction(gameId: number, dto: ClockActionDto, userId: string) {
+    await this.assertGameAccess(gameId, userId);
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership) throw new UnauthorizedException('User has no league configured.');
     const game = await this.getLeagueGame(gameId, membership.league_id);
@@ -731,8 +841,7 @@ export class GameService {
 
   async finalizeGame(gameId: number, dto: FinalizeGameDto, userId: string) {
     if (!dto.confirm) throw new BadRequestException('confirm must be true to finalize game.');
-    const membership = await getUserLeagueMembership(this.db, userId);
-    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    const { membership } = await this.assertGameAccess(gameId, userId);
     const game = await this.getLeagueGame(gameId, membership.league_id);
     if (Number(game.status) !== 1) throw new BadRequestException('Only live games can be finalized.');
 
