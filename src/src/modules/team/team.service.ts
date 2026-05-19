@@ -191,16 +191,31 @@ export class TeamService {
     const seasonTeams = await seasonTeamsQuery.execute();
 
     const minRequired = await this.getLeagueMinRequiredPlayers(membership.league_id);
+    const seasonMeta = await this.db
+      .selectFrom('league.Season')
+      .select(['start_date'])
+      .where('id', '=', seasonId)
+      .executeTakeFirstOrThrow();
+    const cutoffDate = new Date(seasonMeta.start_date as any);
+
+    const ageOnDate = (dob: Date, on: Date) => {
+      let age = on.getUTCFullYear() - dob.getUTCFullYear();
+      const m = on.getUTCMonth() - dob.getUTCMonth();
+      if (m < 0 || (m === 0 && on.getUTCDate() < dob.getUTCDate())) age -= 1;
+      return age;
+    };
     const readiness: Array<{
       team_id: number;
       team_name: string;
       abbreviation: string;
       active_roster_count: number;
+      eligible_active_roster_count: number;
       min_required: number;
       is_complete: boolean;
       is_finalized: boolean;
       is_ready: boolean;
       reasons: string[];
+      ineligible_player_ids: number[];
       finalized_by_user_id: string | null;
       finalized_at: Date | null;
     }> = [];
@@ -213,27 +228,67 @@ export class TeamService {
         .where('status', '=', 'Active')
         .executeTakeFirstOrThrow();
       const active = Number((countRow as any).count ?? 0);
+
+      const division = await this.db
+        .selectFrom('league.SeasonTeam as st')
+        .innerJoin('league.SeasonDivision as d', 'd.id', 'st.division_id')
+        .select(['d.is_open', 'd.age_min', 'd.age_max'])
+        .where('st.season_id', '=', seasonId)
+        .where('st.team_id', '=', team.id)
+        .executeTakeFirst();
+
+      const rosterPlayers = await this.db
+        .selectFrom('player.Roster as r')
+        .innerJoin('player.Player as p', 'p.id', 'r.player_id')
+        .select(['p.id as player_id', 'p.date_of_birth'])
+        .where('r.season_id', '=', seasonId)
+        .where('r.team_id', '=', team.id)
+        .where('r.status', '=', 'Active')
+        .execute();
+
+      const ineligible: number[] = [];
+      let eligible = 0;
+      for (const rp of rosterPlayers as any) {
+        if (!division || division.is_open) {
+          eligible += 1;
+          continue;
+        }
+        const dob = new Date(rp.date_of_birth as any);
+        const age = ageOnDate(dob, cutoffDate);
+        if (division.age_min !== null && division.age_min !== undefined && age < Number(division.age_min)) {
+          ineligible.push(Number(rp.player_id));
+          continue;
+        }
+        if (division.age_max !== null && division.age_max !== undefined && age > Number(division.age_max)) {
+          ineligible.push(Number(rp.player_id));
+          continue;
+        }
+        eligible += 1;
+      }
       const seasonTeamMeta = await this.db
         .selectFrom('league.SeasonTeam')
         .select(['is_finalized', 'finalized_by_user_id', 'finalized_at'])
         .where('season_id', '=', seasonId)
         .where('team_id', '=', team.id)
         .executeTakeFirstOrThrow();
-      const isComplete = active >= minRequired;
+      const isComplete = eligible >= minRequired;
       const isFinalized = Boolean(seasonTeamMeta.is_finalized);
       const reasons: string[] = [];
-      if (!isComplete) reasons.push('insufficient_active_players');
+      if (!isComplete) reasons.push('insufficient_eligible_players');
+      if (ineligible.length > 0) reasons.push('has_ineligible_players');
       if (!isFinalized) reasons.push('not_finalized');
       readiness.push({
         team_id: team.id,
         team_name: team.name,
         abbreviation: team.abbreviation,
         active_roster_count: active,
+        eligible_active_roster_count: eligible,
         min_required: minRequired,
         is_complete: isComplete,
         is_finalized: isFinalized,
         is_ready: isComplete && isFinalized,
         reasons,
+        ineligible_player_ids: ineligible,
         finalized_by_user_id: seasonTeamMeta.finalized_by_user_id,
         finalized_at: seasonTeamMeta.finalized_at as any,
       });
