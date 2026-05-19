@@ -149,11 +149,13 @@ export interface LeagueSeason {
 export interface LeagueSeasonDivision {
   age_max: number | null;
   age_min: number | null;
+  archived_at: Timestamp | null;
   code: string;
   created_at: Generated<Timestamp>;
   id: Generated<number>;
   is_open: Generated<boolean>;
   name: string;
+  rules_config: Generated<Json>;
   season_id: number;
   sort_order: Generated<number>;
 }

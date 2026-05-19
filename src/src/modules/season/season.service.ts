@@ -6,10 +6,13 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { sql } from 'kysely';
 import type { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
 import { CreateSeasonDto } from './dto/create-season.dto';
 import { getUserLeagueMembership } from '../league/league-membership';
+import { CreateSeasonDivisionDto } from './dto/create-season-division.dto';
+import { UpdateSeasonDivisionDto } from './dto/update-season-division.dto';
 
 @Injectable()
 export class SeasonService {
@@ -127,6 +130,138 @@ export class SeasonService {
       success: true,
       season: updated,
     };
+  }
+
+  private async assertLeagueAdmin(userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership || membership.role !== 'league_admin') {
+      throw new ForbiddenException('Only league admins can manage season divisions.');
+    }
+    return membership;
+  }
+
+  async listDivisions(seasonId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) return [];
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+
+    if (!season) throw new NotFoundException('Season not found.');
+
+    return this.db
+      .selectFrom('league.SeasonDivision')
+      .selectAll()
+      .where('season_id', '=', seasonId)
+      .where('archived_at', 'is', null)
+      .orderBy('sort_order', 'asc')
+      .orderBy('id', 'asc')
+      .execute();
+  }
+
+  async createDivision(seasonId: number, dto: CreateSeasonDivisionDto, userId: string) {
+    const membership = await this.assertLeagueAdmin(userId);
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+
+    if (!season) throw new NotFoundException('Season not found.');
+
+    const name = (dto.name ?? '').trim();
+    const code = (dto.code ?? '').trim();
+    if (!name) throw new BadRequestException('name is required.');
+    if (!code) throw new BadRequestException('code is required.');
+
+    const division = await this.db
+      .insertInto('league.SeasonDivision')
+      .values({
+        season_id: seasonId,
+        name,
+        code,
+        sort_order: dto.sort_order ?? 0,
+        age_min: dto.age_min ?? null,
+        age_max: dto.age_max ?? null,
+        is_open: dto.is_open ?? false,
+        rules_config: (dto.rules_config ?? {}) as any,
+        archived_at: null,
+      } as any)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, division };
+  }
+
+  async updateDivision(seasonId: number, divisionId: number, dto: UpdateSeasonDivisionDto, userId: string) {
+    const membership = await this.assertLeagueAdmin(userId);
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+
+    if (!season) throw new NotFoundException('Season not found.');
+
+    const existing = await this.db
+      .selectFrom('league.SeasonDivision')
+      .select(['id'])
+      .where('id', '=', divisionId)
+      .where('season_id', '=', seasonId)
+      .where('archived_at', 'is', null)
+      .executeTakeFirst();
+
+    if (!existing) throw new NotFoundException('Division not found.');
+
+    const patch: any = {};
+    if (dto.name !== undefined) patch.name = dto.name.trim();
+    if (dto.code !== undefined) patch.code = dto.code.trim();
+    if (dto.sort_order !== undefined) patch.sort_order = dto.sort_order;
+    if (dto.age_min !== undefined) patch.age_min = dto.age_min;
+    if (dto.age_max !== undefined) patch.age_max = dto.age_max;
+    if (dto.is_open !== undefined) patch.is_open = dto.is_open;
+    if (dto.rules_config !== undefined) patch.rules_config = (dto.rules_config ?? {}) as any;
+
+    if (Object.keys(patch).length === 0) return { success: true };
+
+    await this.db
+      .updateTable('league.SeasonDivision')
+      .set(patch)
+      .where('id', '=', divisionId)
+      .where('season_id', '=', seasonId)
+      .execute();
+
+    return { success: true };
+  }
+
+  async archiveDivision(seasonId: number, divisionId: number, userId: string) {
+    const membership = await this.assertLeagueAdmin(userId);
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+
+    if (!season) throw new NotFoundException('Season not found.');
+
+    await this.db
+      .updateTable('league.SeasonDivision')
+      .set({ archived_at: sql`now()` } as any)
+      .where('id', '=', divisionId)
+      .where('season_id', '=', seasonId)
+      .execute();
+
+    return { success: true };
   }
 
   private validateSeasonInput(dto: CreateSeasonDto) {
