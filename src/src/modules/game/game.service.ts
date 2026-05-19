@@ -16,6 +16,7 @@ import { ClockActionDto } from './dto/clock-action.dto';
 import { FinalizeGameDto } from './dto/finalize-game.dto';
 import { PublishGameSummaryDto } from './dto/publish-game-summary.dto';
 import { SetGameAwardsDto } from './dto/set-game-awards.dto';
+import { computeSeasonTeamEligibility } from '../team/team-eligibility';
 
 @Injectable()
 export class GameService {
@@ -1322,57 +1323,25 @@ export class GameService {
       .executeTakeFirst();
     if (!season) throw new NotFoundException('Season not found or does not belong to your league.');
 
-    const league = await this.db
-      .selectFrom('league.League')
-      .select(['rules_config'])
-      .where('id', '=', leagueId)
-      .executeTakeFirst();
-    const minRequired = Number((league?.rules_config as any)?.min_roster_players ?? 5);
-
     const seasonTeams = await this.db
       .selectFrom('league.SeasonTeam as st')
       .innerJoin('league.Teams as t', 't.id', 'st.team_id')
-      .select(['t.id', 't.name', 'st.is_finalized'])
+      .select(['t.id'])
       .where('st.season_id', '=', seasonId)
       .execute();
     if (seasonTeams.length < 2) {
       return { ready: false, message: 'Add at least 2 teams to this season before creating schedules.', rosterSummary: [] };
     }
 
-    const rosterSummary: Array<{ team_id: number; team_name: string; active_roster_count: number; min_required: number; is_complete: boolean; is_finalized: boolean; ready: boolean; reasons: string[] }> = [];
-    for (const team of seasonTeams) {
-      const activeCount = await this.db
-        .selectFrom('player.Roster')
-        .select((eb) => eb.fn.count('id').as('count'))
-        .where('season_id', '=', seasonId)
-        .where('team_id', '=', team.id)
-        .where('status', '=', 'Active')
-        .executeTakeFirstOrThrow();
-      const count = Number((activeCount as any).count ?? 0);
-      const isComplete = count >= minRequired;
-      const isFinalized = Boolean((team as any).is_finalized);
-      const reasons: string[] = [];
-      if (!isComplete) reasons.push('insufficient_active_players');
-      if (!isFinalized) reasons.push('not_finalized');
-      rosterSummary.push({
-        team_id: team.id,
-        team_name: team.name,
-        active_roster_count: count,
-        min_required: minRequired,
-        is_complete: isComplete,
-        is_finalized: isFinalized,
-        ready: isComplete && isFinalized,
-        reasons,
-      });
-    }
-    const insufficient = rosterSummary.filter((r) => !r.ready);
-    if (insufficient.length > 0) {
+    const eligibility = await computeSeasonTeamEligibility(this.db, leagueId, seasonId);
+    const ineligible = eligibility.filter((t) => !t.schedule_eligible);
+    if (ineligible.length > 0) {
       return {
         ready: false,
-        message: 'All season teams must have at least 5 active roster players before creating schedules.',
-        rosterSummary,
+        message: 'All season teams must be roster-ready and compliant before creating schedules.',
+        rosterSummary: eligibility,
       };
     }
-    return { ready: true, message: 'Schedule can be created.', rosterSummary };
+    return { ready: true, message: 'Schedule can be created.', rosterSummary: eligibility };
   }
 }

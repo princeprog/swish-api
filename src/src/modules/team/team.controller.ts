@@ -37,6 +37,11 @@ export class TeamController {
     return this.teamService.getSeasonTeamReadiness(+seasonId, req.user.sub);
   }
 
+  @Get('eligibility/season')
+  getSeasonTeamEligibility(@Query('season_id') seasonId: string, @Req() req: any) {
+    return this.teamService.getSeasonTeamEligibility(+seasonId, req.user.sub);
+  }
+
   @Post(':id/roster')
   addRosterPlayer(
     @Param('id') id: string,

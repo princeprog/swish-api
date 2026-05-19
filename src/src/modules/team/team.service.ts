@@ -6,6 +6,7 @@ import { CreateTeamDto } from './dto/create-team.dto';
 import { CreateRosterPlayerDto } from './dto/create-roster-player.dto';
 import { getUserLeagueMembership } from '../league/league-membership';
 import { GameService } from '../game/game.service';
+import { computeSeasonTeamEligibility } from './team-eligibility';
 
 @Injectable()
 export class TeamService {
@@ -301,6 +302,24 @@ export class TeamService {
       ready_teams: readiness.filter((r) => r.is_ready).length,
       not_ready_teams: readiness.filter((r) => !r.is_ready).length,
       teams: readiness,
+    };
+  }
+
+  async getSeasonTeamEligibility(seasonId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+    if (!season) throw new NotFoundException('Season not found or does not belong to your league.');
+
+    return {
+      season_id: seasonId,
+      teams: await computeSeasonTeamEligibility(this.db, membership.league_id, seasonId),
     };
   }
 
