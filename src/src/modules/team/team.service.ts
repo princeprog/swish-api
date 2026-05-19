@@ -8,6 +8,7 @@ import { getUserLeagueMembership } from '../league/league-membership';
 import { GameService } from '../game/game.service';
 import { computeSeasonTeamEligibility } from './team-eligibility';
 import { UpsertComplianceStatusDto } from './dto/upsert-compliance-status.dto';
+import { UpsertSeasonTeamIdentityDto } from './dto/upsert-season-team-identity.dto';
 
 @Injectable()
 export class TeamService {
@@ -572,6 +573,64 @@ export class TeamService {
       .executeTakeFirstOrThrow();
 
     return { success: true, status: updated };
+  }
+
+  async getSeasonTeamIdentity(teamId: number, seasonId: number, userId: string) {
+    await this.assertCanManageTeam(teamId, userId);
+
+    const row = await this.db
+      .selectFrom('league.season_team_identity')
+      .selectAll()
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .executeTakeFirst();
+
+    return row ?? null;
+  }
+
+  async upsertSeasonTeamIdentity(teamId: number, seasonId: number, dto: UpsertSeasonTeamIdentityDto, userId: string) {
+    const { membership } = await this.assertCanManageTeam(teamId, userId);
+
+    const existing = await this.db
+      .selectFrom('league.season_team_identity')
+      .select(['season_id'])
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .executeTakeFirst();
+
+    const values = {
+      season_id: seasonId,
+      team_id: teamId,
+      display_name: dto.display_name ?? null,
+      short_name: dto.short_name ?? null,
+      logo_url: dto.logo_url ?? null,
+      primary_color: dto.primary_color ?? null,
+      secondary_color: dto.secondary_color ?? null,
+      uniform_config: (dto.uniform_config ?? {}) as any,
+      updated_at: new Date() as any,
+    } as any;
+
+    if (!existing) {
+      const inserted = await this.db
+        .insertInto('league.season_team_identity')
+        .values({
+          ...values,
+          created_at: new Date() as any,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return { success: true, identity: inserted };
+    }
+
+    const updated = await this.db
+      .updateTable('league.season_team_identity')
+      .set(values)
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, identity: updated };
   }
 
   async addTeamStaff(teamId: number, dto: any, userId: string) {
