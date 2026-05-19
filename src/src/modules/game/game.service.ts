@@ -21,6 +21,32 @@ import { SetGameAwardsDto } from './dto/set-game-awards.dto';
 export class GameService {
   constructor(@Inject('KYSELY_DB') private readonly db: Kysely<DB>) {}
 
+  private async assertSameDivisionForSeasonTeams(seasonId: number, homeTeamId: number, awayTeamId: number) {
+    const rows = await this.db
+      .selectFrom('league.SeasonTeam')
+      .select(['team_id', 'division_id'])
+      .where('season_id', '=', seasonId)
+      .where('team_id', 'in', [homeTeamId, awayTeamId] as any)
+      .execute();
+
+    if (rows.length !== 2) {
+      throw new BadRequestException('Both teams must be registered for this season.');
+    }
+
+    const byTeam = new Map(rows.map((r: any) => [Number(r.team_id), Number(r.division_id)]));
+    const homeDiv = byTeam.get(homeTeamId);
+    const awayDiv = byTeam.get(awayTeamId);
+    if (homeDiv === undefined || awayDiv === undefined) {
+      throw new BadRequestException('Both teams must be registered for this season.');
+    }
+
+    if (homeDiv !== awayDiv) {
+      throw new BadRequestException('Cross-division matchups are not allowed.');
+    }
+
+    return homeDiv;
+  }
+
   private async assertGameAccess(gameId: number, userId: string) {
     const membership = await getUserLeagueMembership(this.db, userId);
 
@@ -110,6 +136,11 @@ export class GameService {
       throw new BadRequestException('Cannot modify games for an archived season.');
     }
     await this.ensureScheduleReadiness(createGameDto.season_id, membership.league_id);
+    await this.assertSameDivisionForSeasonTeams(
+      createGameDto.season_id,
+      createGameDto.home_team,
+      createGameDto.away_team,
+    );
 
     const game = await this.db
       .insertInto('game.Game')
@@ -335,21 +366,33 @@ export class GameService {
     }
     await this.ensureScheduleReadiness(dto.season_id, membership.league_id);
 
-    const teams = await this.db
-      .selectFrom('league.Teams')
-      .select(['id'])
-      .where('league_id', '=', membership.league_id)
-      .orderBy('id', 'asc')
+    const seasonTeams = await this.db
+      .selectFrom('league.SeasonTeam as st')
+      .innerJoin('league.Teams as t', 't.id', 'st.team_id')
+      .select(['st.team_id as team_id', 'st.division_id as division_id'])
+      .where('st.season_id', '=', dto.season_id)
+      .where('t.league_id', '=', membership.league_id)
+      .orderBy('st.division_id', 'asc')
+      .orderBy('st.team_id', 'asc')
       .execute();
 
-    if (teams.length < 2) {
-      throw new BadRequestException('At least 2 teams are required to generate a round-robin schedule.');
+    const byDivision = new Map<number, number[]>();
+    for (const row of seasonTeams as any) {
+      const divId = Number(row.division_id);
+      const arr = byDivision.get(divId) ?? [];
+      arr.push(Number(row.team_id));
+      byDivision.set(divId, arr);
     }
 
-    const teamIds = teams.map((team) => team.id);
-    const pairings = this.buildRoundRobinPairings(teamIds, dto.games_per_team);
+    const pairings: Array<[number, number]> = [];
+    for (const [, teamIds] of byDivision) {
+      if (teamIds.length < 2) continue;
+      const divPairs = this.buildRoundRobinPairings(teamIds, dto.games_per_team);
+      for (const p of divPairs) pairings.push(p);
+    }
+
     if (pairings.length === 0) {
-      throw new BadRequestException('No fixtures generated. Check games_per_team and team count.');
+      throw new BadRequestException('No fixtures generated. Ensure each division has at least 2 teams.');
     }
 
     const existingGames = await this.db
