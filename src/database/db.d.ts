@@ -202,9 +202,11 @@ export interface LeagueTeamComplianceItems {
 }
 
 export interface LeagueTeamComplianceStatus {
+  attachments: Generated<Json>;
   id: Generated<Int8>;
   item_id: Int8;
   league_id: number;
+  meta: Generated<Json>;
   notes: string | null;
   season_id: number;
   status: string;
