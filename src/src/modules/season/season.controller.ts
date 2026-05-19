@@ -58,4 +58,19 @@ export class SeasonController {
   archiveDivision(@Param('id') id: string, @Param('divisionId') divisionId: string, @Req() req: any) {
     return this.seasonService.archiveDivision(+id, +divisionId, req.user.sub);
   }
+
+  @Get(':id/teams')
+  listSeasonTeams(@Param('id') id: string, @Req() req: any) {
+    return this.seasonService.listSeasonTeams(+id, req.user.sub);
+  }
+
+  @Patch(':id/teams/:teamId/division')
+  setSeasonTeamDivision(
+    @Param('id') id: string,
+    @Param('teamId') teamId: string,
+    @Body() body: { division_id: number },
+    @Req() req: any,
+  ) {
+    return this.seasonService.setSeasonTeamDivision(+id, +teamId, body?.division_id, req.user.sub);
+  }
 }

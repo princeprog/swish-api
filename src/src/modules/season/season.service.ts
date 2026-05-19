@@ -264,6 +264,75 @@ export class SeasonService {
     return { success: true };
   }
 
+  async listSeasonTeams(seasonId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) return [];
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+
+    if (!season) throw new NotFoundException('Season not found.');
+
+    return this.db
+      .selectFrom('league.SeasonTeam as st')
+      .innerJoin('league.Teams as t', 't.id', 'st.team_id')
+      .leftJoin('league.SeasonDivision as d', 'd.id', 'st.division_id')
+      .select([
+        'st.season_id',
+        'st.team_id',
+        'st.division_id',
+        't.name as team_name',
+        't.abbreviation as team_abbreviation',
+        'd.name as division_name',
+        'd.code as division_code',
+      ])
+      .where('st.season_id', '=', seasonId)
+      .orderBy('t.name', 'asc')
+      .execute();
+  }
+
+  async setSeasonTeamDivision(seasonId: number, teamId: number, divisionId: number, userId: string) {
+    const membership = await this.assertLeagueAdmin(userId);
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+    if (!season) throw new NotFoundException('Season not found.');
+
+    const division = await this.db
+      .selectFrom('league.SeasonDivision')
+      .select(['id'])
+      .where('id', '=', divisionId)
+      .where('season_id', '=', seasonId)
+      .where('archived_at', 'is', null)
+      .executeTakeFirst();
+    if (!division) throw new NotFoundException('Division not found for this season.');
+
+    const seasonTeam = await this.db
+      .selectFrom('league.SeasonTeam')
+      .select(['season_id'])
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .executeTakeFirst();
+    if (!seasonTeam) throw new NotFoundException('Team is not registered for this season.');
+
+    await this.db
+      .updateTable('league.SeasonTeam')
+      .set({ division_id: divisionId } as any)
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .execute();
+
+    return { success: true };
+  }
+
   private validateSeasonInput(dto: CreateSeasonDto) {
     if (!dto.name?.trim()) {
       throw new BadRequestException('Season name is required.');
