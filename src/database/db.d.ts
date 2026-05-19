@@ -162,6 +162,7 @@ export interface LeagueSeasonDivision {
 
 export interface LeagueSeasonTeam {
   bracket: string;
+  division_id: number;
   finalized_at: Timestamp | null;
   finalized_by_user_id: string | null;
   is_finalized: Generated<boolean>;
