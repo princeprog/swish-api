@@ -13,6 +13,10 @@ import { CreateSeasonDto } from './dto/create-season.dto';
 import { getUserLeagueMembership } from '../league/league-membership';
 import { CreateSeasonDivisionDto } from './dto/create-season-division.dto';
 import { UpdateSeasonDivisionDto } from './dto/update-season-division.dto';
+import { CreateComplianceItemDto } from './dto/create-compliance-item.dto';
+import { UpdateComplianceItemDto } from './dto/update-compliance-item.dto';
+import { CreateRequiredRoleDto } from './dto/create-required-role.dto';
+import { UpdateRequiredRoleDto } from './dto/update-required-role.dto';
 
 @Injectable()
 export class SeasonService {
@@ -356,5 +360,173 @@ export class SeasonService {
     if (!this.allowedPlayoffFormats.has(dto.playoff_format)) {
       throw new BadRequestException('playoff_format is not supported.');
     }
+  }
+
+  private async assertLeagueAdminForSeason(seasonId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    if (membership.role !== 'league_admin') throw new ForbiddenException('Only league admins can manage season requirements.');
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id', 'league_id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+    if (!season) throw new NotFoundException('Season not found or does not belong to your league.');
+
+    return { membership };
+  }
+
+  async listComplianceItems(seasonId: number, userId: string, includeArchived: boolean) {
+    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+
+    let q = this.db
+      .selectFrom('league.team_compliance_items')
+      .selectAll()
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId);
+
+    if (!includeArchived) q = q.where('archived_at', 'is', null);
+
+    return q.orderBy('category', 'asc').orderBy('sort_order', 'asc').orderBy('label', 'asc').execute();
+  }
+
+  async createComplianceItem(seasonId: number, dto: CreateComplianceItemDto, userId: string) {
+    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+
+    const row = await this.db
+      .insertInto('league.team_compliance_items')
+      .values({
+        league_id: membership.league_id,
+        season_id: seasonId,
+        division_id: dto.division_id ?? null,
+        key: dto.key,
+        label: dto.label,
+        category: dto.category,
+        is_required: dto.is_required ?? true,
+        sort_order: dto.sort_order ?? 0,
+        config: (dto.config ?? {}) as any,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, item: row };
+  }
+
+  async updateComplianceItem(seasonId: number, itemId: number, dto: UpdateComplianceItemDto, userId: string) {
+    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+
+    const existing = await this.db
+      .selectFrom('league.team_compliance_items')
+      .select(['id'])
+      .where('id', '=', itemId as any)
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .executeTakeFirst();
+    if (!existing) throw new NotFoundException('Compliance item not found.');
+
+    const updated = await this.db
+      .updateTable('league.team_compliance_items')
+      .set({
+        key: dto.key as any,
+        label: dto.label as any,
+        category: dto.category as any,
+        is_required: dto.is_required as any,
+        sort_order: dto.sort_order as any,
+        config: (dto.config ?? undefined) as any,
+      })
+      .where('id', '=', itemId as any)
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, item: updated };
+  }
+
+  async archiveComplianceItem(seasonId: number, itemId: number, userId: string) {
+    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    await this.db
+      .updateTable('league.team_compliance_items')
+      .set({ archived_at: new Date() as any })
+      .where('id', '=', itemId as any)
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .execute();
+    return { success: true };
+  }
+
+  async listRequiredStaffRoles(seasonId: number, userId: string) {
+    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+
+    return this.db
+      .selectFrom('league.team_staff_required_roles')
+      .selectAll()
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .orderBy('sort_order', 'asc')
+      .orderBy('label', 'asc')
+      .execute();
+  }
+
+  async createRequiredStaffRole(seasonId: number, dto: CreateRequiredRoleDto, userId: string) {
+    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+
+    const row = await this.db
+      .insertInto('league.team_staff_required_roles')
+      .values({
+        league_id: membership.league_id,
+        season_id: seasonId,
+        division_id: dto.division_id ?? null,
+        role: dto.role,
+        label: dto.label,
+        is_required: dto.is_required ?? true,
+        sort_order: dto.sort_order ?? 0,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, requiredRole: row };
+  }
+
+  async updateRequiredStaffRole(seasonId: number, roleId: number, dto: UpdateRequiredRoleDto, userId: string) {
+    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+
+    const existing = await this.db
+      .selectFrom('league.team_staff_required_roles')
+      .select(['id'])
+      .where('id', '=', roleId as any)
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .executeTakeFirst();
+    if (!existing) throw new NotFoundException('Required role not found.');
+
+    const updated = await this.db
+      .updateTable('league.team_staff_required_roles')
+      .set({
+        role: dto.role as any,
+        label: dto.label as any,
+        is_required: dto.is_required as any,
+        sort_order: dto.sort_order as any,
+      })
+      .where('id', '=', roleId as any)
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, requiredRole: updated };
+  }
+
+  async deleteRequiredStaffRole(seasonId: number, roleId: number, userId: string) {
+    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    await this.db
+      .deleteFrom('league.team_staff_required_roles')
+      .where('id', '=', roleId as any)
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .execute();
+    return { success: true };
   }
 }
