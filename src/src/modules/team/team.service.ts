@@ -9,6 +9,7 @@ import { GameService } from '../game/game.service';
 import { computeSeasonTeamEligibility } from './team-eligibility';
 import { UpsertComplianceStatusDto } from './dto/upsert-compliance-status.dto';
 import { UpsertSeasonTeamIdentityDto } from './dto/upsert-season-team-identity.dto';
+import { UpsertTeamAvailabilityDto } from './dto/upsert-team-availability.dto';
 
 @Injectable()
 export class TeamService {
@@ -631,6 +632,68 @@ export class TeamService {
       .executeTakeFirstOrThrow();
 
     return { success: true, identity: updated };
+  }
+
+  async getTeamAvailability(teamId: number, seasonId: number, userId: string) {
+    const { membership } = await this.assertCanManageTeam(teamId, userId);
+
+    const row = await this.db
+      .selectFrom('league.team_availability')
+      .selectAll()
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .executeTakeFirst();
+
+    return row ?? { season_id: seasonId, team_id: teamId, blackout_dates: [] };
+  }
+
+  async upsertTeamAvailability(teamId: number, seasonId: number, dto: UpsertTeamAvailabilityDto, userId: string) {
+    const { membership } = await this.assertCanManageTeam(teamId, userId);
+
+    const blackoutDates = Array.isArray(dto.blackout_dates) ? dto.blackout_dates : [];
+    for (const d of blackoutDates) {
+      if (typeof d !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d)) {
+        throw new BadRequestException('Invalid blackout date format. Use YYYY-MM-DD.');
+      }
+    }
+
+    const existing = await this.db
+      .selectFrom('league.team_availability')
+      .select(['season_id'])
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .executeTakeFirst();
+
+    if (!existing) {
+      const inserted = await this.db
+        .insertInto('league.team_availability')
+        .values({
+          league_id: membership.league_id,
+          season_id: seasonId,
+          team_id: teamId,
+          blackout_dates: blackoutDates as any,
+          updated_at: new Date() as any,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      return { success: true, availability: inserted };
+    }
+
+    const updated = await this.db
+      .updateTable('league.team_availability')
+      .set({
+        blackout_dates: blackoutDates as any,
+        updated_at: new Date() as any,
+      })
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, availability: updated };
   }
 
   async addTeamStaff(teamId: number, dto: any, userId: string) {
