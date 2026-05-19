@@ -171,6 +171,33 @@ export interface LeagueSeasonTeam {
   team_id: number;
 }
 
+export interface LeagueTeamComplianceItems {
+  archived_at: Timestamp | null;
+  category: string;
+  config: Generated<Json>;
+  created_at: Generated<Timestamp>;
+  division_id: number | null;
+  id: Generated<Int8>;
+  is_required: Generated<boolean>;
+  key: string;
+  label: string;
+  league_id: number;
+  season_id: number | null;
+  sort_order: Generated<number>;
+}
+
+export interface LeagueTeamComplianceStatus {
+  id: Generated<Int8>;
+  item_id: Int8;
+  league_id: number;
+  notes: string | null;
+  season_id: number;
+  status: string;
+  team_id: number;
+  updated_at: Generated<Timestamp>;
+  updated_by_user_id: string | null;
+}
+
 export interface LeagueTeamManagerTeams {
   created_at: Generated<Timestamp>;
   league_id: number;
@@ -224,6 +251,8 @@ export interface DB {
   "league.Season": LeagueSeason;
   "league.SeasonDivision": LeagueSeasonDivision;
   "league.SeasonTeam": LeagueSeasonTeam;
+  "league.team_compliance_items": LeagueTeamComplianceItems;
+  "league.team_compliance_status": LeagueTeamComplianceStatus;
   "league.team_manager_teams": LeagueTeamManagerTeams;
   "league.Teams": LeagueTeams;
   "player.Player": PlayerPlayer;
