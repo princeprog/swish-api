@@ -171,6 +171,21 @@ export interface LeagueSeasonTeam {
   team_id: number;
 }
 
+export interface LeagueSeasonTeamIdentity {
+  approved_at: Timestamp | null;
+  approved_by_user_id: string | null;
+  created_at: Generated<Timestamp>;
+  display_name: string | null;
+  logo_url: string | null;
+  primary_color: string | null;
+  season_id: number;
+  secondary_color: string | null;
+  short_name: string | null;
+  team_id: number;
+  uniform_config: Generated<Json>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface LeagueTeamComplianceItems {
   archived_at: Timestamp | null;
   category: string;
@@ -275,6 +290,7 @@ export interface DB {
   "league.league_invitations": LeagueLeagueInvitations;
   "league.league_members": LeagueLeagueMembers;
   "league.Season": LeagueSeason;
+  "league.season_team_identity": LeagueSeasonTeamIdentity;
   "league.SeasonDivision": LeagueSeasonDivision;
   "league.SeasonTeam": LeagueSeasonTeam;
   "league.team_compliance_items": LeagueTeamComplianceItems;
