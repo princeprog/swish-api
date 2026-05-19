@@ -186,6 +186,17 @@ export interface LeagueSeasonTeamIdentity {
   updated_at: Generated<Timestamp>;
 }
 
+export interface LeagueTeamAvailability {
+  blackout_dates: Generated<Json>;
+  id: Generated<Int8>;
+  league_id: number;
+  notes: string | null;
+  season_id: number;
+  team_id: number;
+  updated_at: Generated<Timestamp>;
+  updated_by_user_id: string | null;
+}
+
 export interface LeagueTeamComplianceItems {
   archived_at: Timestamp | null;
   category: string;
@@ -295,6 +306,7 @@ export interface DB {
   "league.season_team_identity": LeagueSeasonTeamIdentity;
   "league.SeasonDivision": LeagueSeasonDivision;
   "league.SeasonTeam": LeagueSeasonTeam;
+  "league.team_availability": LeagueTeamAvailability;
   "league.team_compliance_items": LeagueTeamComplianceItems;
   "league.team_compliance_status": LeagueTeamComplianceStatus;
   "league.team_manager_teams": LeagueTeamManagerTeams;

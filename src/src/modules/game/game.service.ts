@@ -142,6 +142,23 @@ export class GameService {
       createGameDto.away_team,
     );
 
+    // Blackout-date compliance (best-effort): block scheduling on declared blackout dates.
+    const dayKey = this.toDayKey(createGameDto.scheduled_at as any);
+    const blackouts = await this.db
+      .selectFrom('league.team_availability')
+      .select(['team_id', 'blackout_dates'])
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', createGameDto.season_id)
+      .where('team_id', 'in', [createGameDto.home_team, createGameDto.away_team] as any)
+      .execute();
+
+    for (const row of blackouts as any) {
+      const dates = (row.blackout_dates ?? []) as any[];
+      if (Array.isArray(dates) && dates.includes(dayKey)) {
+        throw new BadRequestException(`Team ${row.team_id} is unavailable on ${dayKey}.`);
+      }
+    }
+
     const game = await this.db
       .insertInto('game.Game')
       .values({
@@ -416,10 +433,29 @@ export class GameService {
       existingDayIndex,
     );
 
+    // Filter out fixtures landing on blackout dates (soft-skip). If too many are filtered, user can re-run with different start date/time.
+    const blackoutRows = await this.db
+      .selectFrom('league.team_availability')
+      .select(['team_id', 'blackout_dates'])
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', dto.season_id)
+      .execute();
+    const blackoutByTeam = new Map<number, Set<string>>();
+    for (const r of blackoutRows as any) {
+      const set = new Set<string>(Array.isArray(r.blackout_dates) ? r.blackout_dates : []);
+      blackoutByTeam.set(Number(r.team_id), set);
+    }
+
     const insertedGames = await this.db.transaction().execute(async (trx) => {
       const created: any[] = [];
       for (let idx = 0; idx < pairings.length; idx += 1) {
         const [homeTeam, awayTeam] = pairings[idx];
+        const day = this.toDayKey(scheduledAtDates[idx] as any);
+        const homeBlocked = blackoutByTeam.get(Number(homeTeam))?.has(day);
+        const awayBlocked = blackoutByTeam.get(Number(awayTeam))?.has(day);
+        if (homeBlocked || awayBlocked) {
+          continue;
+        }
         const inserted = await trx
           .insertInto('game.Game')
           .values({
