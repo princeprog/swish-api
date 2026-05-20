@@ -164,7 +164,22 @@ export class AuthService {
       this.setRefreshTokenCookie(response, refreshToken);
     }
 
-    const hasLeagueConfigured = Boolean(membership);
+    let hasLeagueConfigured = false;
+    if (membership && leagueId) {
+      const league = await this.db
+        .selectFrom('league.League')
+        .select(['name', 'description', 'location', 'contact_info', 'rules_config'])
+        .where('id', '=', leagueId)
+        .executeTakeFirst();
+      const nameOk = Boolean(league?.name && String(league.name).trim() && String(league.name).trim() !== 'New League');
+      const basicsOk = Boolean(
+        league?.description && String(league.description).trim() &&
+        league?.location && String(league.location).trim() &&
+        league?.contact_info && String(league.contact_info).trim(),
+      );
+      const rulesOk = Boolean(league?.rules_config && Object.keys((league.rules_config as any) ?? {}).length > 0);
+      hasLeagueConfigured = nameOk && basicsOk && rulesOk;
+    }
 
     return {
       accessToken,
@@ -283,7 +298,23 @@ export class AuthService {
     const membership = await getUserLeagueMembership(this.db, user.id);
     const role = membership?.role ?? 'user';
     const leagueId = membership?.league_id ?? null;
-    const hasLeagueConfigured = Boolean(membership);
+
+    let hasLeagueConfigured = false;
+    if (membership && leagueId) {
+      const league = await this.db
+        .selectFrom('league.League')
+        .select(['name', 'description', 'location', 'contact_info', 'rules_config'])
+        .where('id', '=', leagueId)
+        .executeTakeFirst();
+      const nameOk = Boolean(league?.name && String(league.name).trim() && String(league.name).trim() !== 'New League');
+      const basicsOk = Boolean(
+        league?.description && String(league.description).trim() &&
+        league?.location && String(league.location).trim() &&
+        league?.contact_info && String(league.contact_info).trim(),
+      );
+      const rulesOk = Boolean(league?.rules_config && Object.keys((league.rules_config as any) ?? {}).length > 0);
+      hasLeagueConfigured = nameOk && basicsOk && rulesOk;
+    }
 
     return {
       id: user.id,

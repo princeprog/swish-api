@@ -105,6 +105,14 @@ export interface GameGameSummary {
   published_at: Generated<Timestamp>;
 }
 
+export interface LeagueInstanceControls {
+  id: string;
+  maintenance_lock_enabled: Generated<boolean>;
+  maintenance_lock_reason: string | null;
+  maintenance_lock_updated_at: Timestamp | null;
+  maintenance_lock_updated_by: string | null;
+}
+
 export interface LeagueLeague {
   contact_info: string;
   created_at: Generated<Timestamp>;
@@ -195,6 +203,18 @@ export interface LeagueSeasonTeamIdentity {
   team_id: number;
   uniform_config: Generated<Json>;
   updated_at: Generated<Timestamp>;
+}
+
+export interface LeagueSuperAdminAuditLog {
+  action_type: string;
+  actor_user_id: string;
+  after_snapshot: Json | null;
+  before_snapshot: Json | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<Int8>;
+  reason: string | null;
+  target_id: string | null;
+  target_type: string;
 }
 
 export interface LeagueTeamAvailability {
@@ -310,6 +330,7 @@ export interface DB {
   "game.GameEvent": GameGameEvent;
   "game.GameStats": GameGameStats;
   "game.GameSummary": GameGameSummary;
+  "league.instance_controls": LeagueInstanceControls;
   "league.League": LeagueLeague;
   "league.league_admin_invitations": LeagueLeagueAdminInvitations;
   "league.league_invitations": LeagueLeagueInvitations;
@@ -318,6 +339,7 @@ export interface DB {
   "league.season_team_identity": LeagueSeasonTeamIdentity;
   "league.SeasonDivision": LeagueSeasonDivision;
   "league.SeasonTeam": LeagueSeasonTeam;
+  "league.super_admin_audit_log": LeagueSuperAdminAuditLog;
   "league.team_availability": LeagueTeamAvailability;
   "league.team_compliance_items": LeagueTeamComplianceItems;
   "league.team_compliance_status": LeagueTeamComplianceStatus;
