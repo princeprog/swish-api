@@ -10,6 +10,7 @@ import { SeasonModule } from './src/modules/season/season.module';
 import { TeamModule } from './src/modules/team/team.module';
 import { GameModule } from './src/modules/game/game.module';
 import { PlayerModule } from './src/modules/player/player.module';
+import { SuperAdminModule } from './src/modules/super-admin/super-admin.module';
 
 
 @Module({
@@ -23,6 +24,7 @@ import { PlayerModule } from './src/modules/player/player.module';
     TeamModule,
     GameModule,
     PlayerModule,
+    SuperAdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

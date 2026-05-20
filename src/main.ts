@@ -8,7 +8,14 @@ async function bootstrap() {
   app.use(cookieParser());
 
   app.enableCors({
-    origin: /^http:\/\/localhost(:\d+)?$/,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const allowed = [
+        /^http:\/\/localhost(:\d+)?$/,
+        /^http:\/\/127\.0\.0\.1(:\d+)?$/,
+      ].some((pattern) => pattern.test(origin));
+      return callback(allowed ? null : new Error('Not allowed by CORS'), allowed);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

@@ -11,6 +11,7 @@ import { LeagueAdminInvitationService } from './league-admin-invitation.service'
   imports: [AuthModule, UsersModule],
   controllers: [LeagueController],
   providers: [LeagueService, LeagueInvitationService, LeagueAdminInvitationService, InvitationEmailService],
+  exports: [InvitationEmailService],
 })
 export class LeagueModule {}
 

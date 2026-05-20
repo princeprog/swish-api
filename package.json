@@ -23,7 +23,8 @@
     "migrate:up": "kysely migrate up",
     "migrate:down": "kysely migrate down",
     "migrate:latest": "kysely migrate latest",
-    "migrate:list": "kysely migrate list"
+    "migrate:list": "kysely migrate list",
+    "seed:super-admin": "ts-node src/scripts/create-super-admin.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
