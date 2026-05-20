@@ -6,12 +6,15 @@ import { CreateLeagueInviteDto } from './dto/create-league-invite.dto';
 import { LeagueInvitationService } from './league-invitation.service';
 import type { Response } from 'express';
 import { UpdateLeagueDto } from './dto/update-league.dto';
+import { CreateLeagueAdminInviteDto } from './dto/create-league-admin-invite.dto';
+import { LeagueAdminInvitationService } from './league-admin-invitation.service';
 
 @Controller('league')
 export class LeagueController {
   constructor(
     private readonly leagueService: LeagueService,
     private readonly leagueInvitationService: LeagueInvitationService,
+    private readonly leagueAdminInvitationService: LeagueAdminInvitationService,
   ) {}
 
   @UseGuards(AuthGuard)
@@ -41,6 +44,12 @@ export class LeagueController {
   @Post('invitations')
   createInvite(@Body() dto: CreateLeagueInviteDto, @Req() req: any) {
     return this.leagueInvitationService.createInvitation(req.user.sub, dto);
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('admin-invitations')
+  createLeagueAdminInvite(@Body() dto: CreateLeagueAdminInviteDto, @Req() req: any) {
+    return this.leagueAdminInvitationService.createInvitation(req.user.sub, dto);
   }
 
   @UseGuards(AuthGuard)
@@ -102,6 +111,12 @@ export class LeagueController {
   @Get('invitations/verify')
   async verifyInvitation(@Query('token') token: string, @Res({ passthrough: true }) res: Response) {
     const result = await this.leagueInvitationService.verifyInvitation(token);
+    return res.redirect(302, result.redirectTo);
+  }
+
+  @Get('admin-invitations/verify')
+  async verifyLeagueAdminInvitation(@Query('token') token: string, @Res({ passthrough: true }) res: Response) {
+    const result = await this.leagueAdminInvitationService.verifyInvitation(token);
     return res.redirect(302, result.redirectTo);
   }
 }

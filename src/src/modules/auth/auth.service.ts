@@ -28,66 +28,90 @@ export class AuthService {
   }
 
   async createAccountFromInvite(dto: CreateAccountFromInviteDto, response?: Response) {
-    const payload = this.jwtService.verify(dto.invite) as {
-      purpose: 'invite-setup';
-      inviteId: string;
-      email: string;
-    };
-
-    if (payload.purpose !== 'invite-setup') {
-      throw new BadRequestException('Invalid invitation session token.');
-    }
+    const payload = this.jwtService.verify(dto.invite) as
+      | { purpose: 'invite-setup'; inviteId: string; email: string }
+      | { purpose: 'league-admin-invite-setup'; inviteId: string; email: string };
 
     const normalizedEmail = payload.email.trim().toLowerCase();
 
-    const invite = await this.db
-      .selectFrom('league.league_invitations')
-      .selectAll()
-      .where('id', '=', payload.inviteId)
-      .where(sql<string>`lower(email)`, '=', normalizedEmail)
-      .executeTakeFirst();
+    if (payload.purpose === 'invite-setup') {
+      const invite = await this.db
+        .selectFrom('league.league_invitations')
+        .selectAll()
+        .where('id', '=', payload.inviteId)
+        .where(sql<string>`lower(email)`, '=', normalizedEmail)
+        .executeTakeFirst();
 
-    if (!invite) {
-      throw new BadRequestException('Invitation not found.');
+      if (!invite) throw new BadRequestException('Invitation not found.');
+      if (invite.accepted_at) throw new BadRequestException('This invitation has already been used.');
+      if (invite.revoked_at) throw new BadRequestException('This invitation has been revoked.');
+      if (invite.expires_at.getTime() <= Date.now()) throw new BadRequestException('This invitation has expired.');
+
+      const user = await this.usersService.create({
+        email: invite.email.trim().toLowerCase(),
+        full_name: dto.full_name,
+        password: dto.password,
+      });
+
+      await this.db.transaction().execute(async (trx) => {
+        await trx
+          .insertInto('league.league_members')
+          .values({ league_id: invite.league_id, user_id: user.id, role: invite.role })
+          .onConflict((oc) => oc.column('user_id').doNothing())
+          .execute();
+
+        await trx.updateTable('league.league_invitations').set({ accepted_at: new Date() }).where('id', '=', invite.id).execute();
+      });
+
+      return this.login(user, response);
     }
 
-    if (invite.accepted_at) {
-      throw new BadRequestException('This invitation has already been used.');
+    if (payload.purpose === 'league-admin-invite-setup') {
+      const invite = await this.db
+        .selectFrom('league.league_admin_invitations')
+        .selectAll()
+        .where('id', '=', payload.inviteId)
+        .where(sql<string>`lower(email)`, '=', normalizedEmail)
+        .executeTakeFirst();
+
+      if (!invite) throw new BadRequestException('Invitation not found.');
+      if ((invite as any).accepted_at) throw new BadRequestException('This invitation has already been used.');
+      if ((invite as any).revoked_at) throw new BadRequestException('This invitation has been revoked.');
+      if ((invite as any).expires_at.getTime() <= Date.now()) throw new BadRequestException('This invitation has expired.');
+
+      const user = await this.usersService.create({
+        email: normalizedEmail,
+        full_name: dto.full_name,
+        password: dto.password,
+      });
+
+      await this.db.transaction().execute(async (trx) => {
+        const createdLeague = await trx
+          .insertInto('league.League')
+          .values({
+            name: 'New League',
+            logo_url: '',
+            description: '',
+            location: '',
+            contact_info: '',
+            rules_config: sql`'{}'::jsonb` as any,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+
+        await trx.insertInto('league.league_members').values({ league_id: createdLeague.id, user_id: user.id, role: 'league_admin' }).execute();
+
+        await trx
+          .updateTable('league.league_admin_invitations')
+          .set({ accepted_at: new Date() })
+          .where('id', '=', (invite as any).id)
+          .execute();
+      });
+
+      return this.login(user, response);
     }
 
-    if (invite.revoked_at) {
-      throw new BadRequestException('This invitation has been revoked.');
-    }
-
-    if (invite.expires_at.getTime() <= Date.now()) {
-      throw new BadRequestException('This invitation has expired.');
-    }
-
-    const user = await this.usersService.create({
-      email: invite.email.trim().toLowerCase(),
-      full_name: dto.full_name,
-      password: dto.password,
-    });
-
-    await this.db.transaction().execute(async (trx) => {
-      await trx
-        .insertInto('league.league_members')
-        .values({
-          league_id: invite.league_id,
-          user_id: user.id,
-          role: invite.role,
-        })
-        .onConflict((oc) => oc.column('user_id').doNothing())
-        .execute();
-
-      await trx
-        .updateTable('league.league_invitations')
-        .set({ accepted_at: new Date() })
-        .where('id', '=', invite.id)
-        .execute();
-    });
-
-    return this.login(user, response);
+    throw new BadRequestException('Invalid invitation session token.');
   }
 
   async validateUser(username: string, password: string) {

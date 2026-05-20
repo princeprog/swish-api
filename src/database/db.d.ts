@@ -116,6 +116,17 @@ export interface LeagueLeague {
   rules_config: Json;
 }
 
+export interface LeagueLeagueAdminInvitations {
+  accepted_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  created_by_user_id: string | null;
+  email: string;
+  expires_at: Timestamp;
+  id: Generated<string>;
+  revoked_at: Timestamp | null;
+  token_hash: string;
+}
+
 export interface LeagueLeagueInvitations {
   accepted_at: Timestamp | null;
   created_at: Generated<Timestamp>;
@@ -300,6 +311,7 @@ export interface DB {
   "game.GameStats": GameGameStats;
   "game.GameSummary": GameGameSummary;
   "league.League": LeagueLeague;
+  "league.league_admin_invitations": LeagueLeagueAdminInvitations;
   "league.league_invitations": LeagueLeagueInvitations;
   "league.league_members": LeagueLeagueMembers;
   "league.Season": LeagueSeason;
