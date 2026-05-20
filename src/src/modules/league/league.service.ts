@@ -316,6 +316,50 @@ export class LeagueService {
     };
   }
 
+  async getSetupDraft(userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership || (membership.role !== 'league_admin' && membership.role !== 'super_admin')) {
+      throw new ForbiddenException('Only league admins can access setup draft.');
+    }
+
+    const league = await this.db
+      .selectFrom('league.League')
+      .select(['id', 'rules_config'])
+      .where('id', '=', membership.league_id)
+      .executeTakeFirst();
+    if (!league) throw new NotFoundException('League not found.');
+
+    const rules = (league.rules_config as any) ?? {};
+    return { leagueId: league.id, draft: rules.setup_draft ?? null };
+  }
+
+  async upsertSetupDraft(userId: string, draft: Record<string, any>) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership || (membership.role !== 'league_admin' && membership.role !== 'super_admin')) {
+      throw new ForbiddenException('Only league admins can update setup draft.');
+    }
+
+    const league = await this.db
+      .selectFrom('league.League')
+      .select(['id', 'rules_config'])
+      .where('id', '=', membership.league_id)
+      .executeTakeFirst();
+    if (!league) throw new NotFoundException('League not found.');
+
+    const nextRules = {
+      ...((league.rules_config as any) ?? {}),
+      setup_draft: draft ?? {},
+    };
+
+    await this.db
+      .updateTable('league.League')
+      .set({ rules_config: JSON.stringify(nextRules) as any })
+      .where('id', '=', membership.league_id)
+      .execute();
+
+    return { success: true };
+  }
+
   private normalizeRulesConfig(raw: Record<string, any>) {
     if (!raw || typeof raw !== 'object') {
       throw new BadRequestException('rules_config is required.');

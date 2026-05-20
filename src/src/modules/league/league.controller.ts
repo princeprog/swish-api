@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { LeagueService } from './league.service';
 import { CreateLeagueDto } from './dto/create-league.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -8,6 +8,7 @@ import type { Response } from 'express';
 import { UpdateLeagueDto } from './dto/update-league.dto';
 import { CreateLeagueAdminInviteDto } from './dto/create-league-admin-invite.dto';
 import { LeagueAdminInvitationService } from './league-admin-invitation.service';
+import { UpsertSetupDraftDto } from './dto/upsert-setup-draft.dto';
 
 @Controller('league')
 export class LeagueController {
@@ -100,6 +101,18 @@ export class LeagueController {
   @Post('members/:memberUserId/teams')
   setMemberTeams(@Req() req: any, @Param('memberUserId') memberUserId: string, @Body() body: { teamIds: number[] }) {
     return this.leagueService.setMemberManagedTeams(req.user.sub, memberUserId, body?.teamIds ?? []);
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('setup-draft')
+  getSetupDraft(@Req() req: any) {
+    return this.leagueService.getSetupDraft(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard)
+  @Put('setup-draft')
+  upsertSetupDraft(@Req() req: any, @Body() body: UpsertSetupDraftDto) {
+    return this.leagueService.upsertSetupDraft(req.user.sub, body?.draft ?? {});
   }
 
   @UseGuards(AuthGuard)
