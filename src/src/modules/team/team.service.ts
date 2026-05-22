@@ -10,6 +10,7 @@ import { computeSeasonTeamEligibility } from './team-eligibility';
 import { UpsertComplianceStatusDto } from './dto/upsert-compliance-status.dto';
 import { UpsertSeasonTeamIdentityDto } from './dto/upsert-season-team-identity.dto';
 import { UpsertTeamAvailabilityDto } from './dto/upsert-team-availability.dto';
+import { isManagerEditableStaffRole, normalizeStaffRole } from './team-staff-contact-policy';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -732,7 +733,7 @@ export class TeamService {
       .where('team_id', '=', teamId)
       .executeTakeFirst();
 
-    return items.map((it: any) => {
+    const mappedItems = items.map((it: any) => {
       const st = byItem.get(Number(it.id));
       const stMeta = this.jsonSafe<Record<string, any>>(st?.meta, {});
       const stAttachments = this.jsonSafe<any[]>(st?.attachments, []);
@@ -774,6 +775,83 @@ export class TeamService {
         can_review: canReview,
       };
     });
+
+    const makeSystemRequirement = (key: string, label: string, blocking: boolean, reasonCode: string, category = 'system') => ({
+      id: `system:${key}`,
+      key: `system:${key}`,
+      label,
+      source: 'system',
+      category,
+      validation_mode: 'auto',
+      status: blocking ? 'pending' : 'complete',
+      blocking,
+      reason_code: reasonCode,
+      review_remarks: null,
+      attachments: [],
+    });
+
+    const requirementRows: any[] = [
+      makeSystemRequirement(
+        'roster_count',
+        `Minimum roster players (${eligibilityRow?.min_required_roster_players ?? 5})`,
+        reasons.includes('insufficient_active_players'),
+        'insufficient_active_players',
+        'eligibility',
+      ),
+      makeSystemRequirement(
+        'roster_finalized',
+        'Roster finalized',
+        reasons.includes('not_finalized'),
+        'not_finalized',
+        'eligibility',
+      ),
+      makeSystemRequirement(
+        'team_identity',
+        'Team identity configured',
+        reasons.includes('missing_team_identity'),
+        'missing_team_identity',
+        'identity',
+      ),
+    ];
+
+    const missingStaffRoles = Array.from(new Set(reasons.filter((r) => r.startsWith('missing_staff_role:'))))
+      .map((reason) => {
+        const role = reason.replace('missing_staff_role:', '');
+        return makeSystemRequirement(`staff_role:${role}`, `Required staff role: ${role}`, true, reason, 'contacts');
+      });
+    requirementRows.push(...missingStaffRoles);
+
+    const mappedManualRows = mappedItems.map((it: any) => {
+      const reasonCode = `compliance_item_incomplete:${String(it.key)}`;
+      const blocking = reasons.includes(reasonCode);
+      return {
+        id: `manual:${String(it.id)}`,
+        key: it.key,
+        label: it.label,
+        source: 'manual',
+        category: it.category,
+        validation_mode: it.validation_mode ?? 'evidence',
+        status: it.status,
+        blocking,
+        reason_code: reasonCode,
+        review_remarks: it.review_remarks ?? null,
+        attachments: it.attachments ?? [],
+      };
+    });
+
+    requirementRows.push(...mappedManualRows);
+
+    const dedupedReasonCodes = new Set<string>();
+    for (const row of requirementRows) {
+      if (row.blocking && row.reason_code) dedupedReasonCodes.add(String(row.reason_code));
+    }
+
+    return {
+      items: mappedItems,
+      unified_requirements: requirementRows,
+      blockers_count: dedupedReasonCodes.size,
+      blockers_reason_codes: Array.from(dedupedReasonCodes),
+    };
   }
 
   private async getComplianceItemForTeamContext(teamId: number, seasonId: number, itemId: number, userId: string) {
@@ -1155,6 +1233,9 @@ export class TeamService {
     if (!dto.season_id) throw new BadRequestException('season_id is required.');
     if (!role) throw new BadRequestException('role is required.');
     if (!full_name) throw new BadRequestException('full_name is required.');
+    if (membership.role === 'team_manager' && !isManagerEditableStaffRole(role)) {
+      throw new BadRequestException('role is required.');
+    }
 
     const season = await this.db
       .selectFrom('league.Season')
@@ -1171,7 +1252,7 @@ export class TeamService {
         league_id: membership.league_id,
         season_id: Number(dto.season_id),
         team_id: teamId,
-        role,
+        role: membership.role === 'team_manager' ? normalizeStaffRole(role) : role,
         full_name,
         email: dto.email ?? null,
         phone: dto.phone ?? null,
@@ -1188,7 +1269,7 @@ export class TeamService {
 
     const existing = await this.db
       .selectFrom('league.team_staff')
-      .select(['id', 'season_id'])
+      .select(['id', 'season_id', 'role'])
       .where('id', '=', staffId as any)
       .where('team_id', '=', teamId)
       .where('league_id', '=', membership.league_id)
@@ -1196,7 +1277,7 @@ export class TeamService {
     if (!existing) throw new NotFoundException('Staff member not found.');
 
     const patch: any = {};
-    if (dto.role !== undefined) patch.role = String(dto.role).trim();
+    if (dto.role !== undefined) patch.role = membership.role === 'team_manager' ? normalizeStaffRole(dto.role) : String(dto.role).trim();
     if (dto.full_name !== undefined) patch.full_name = String(dto.full_name).trim();
     if (dto.email !== undefined) patch.email = dto.email ?? null;
     if (dto.phone !== undefined) patch.phone = dto.phone ?? null;

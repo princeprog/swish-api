@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
+import { normalizeStaffRole } from './team-staff-contact-policy';
 
 export type SeasonTeamEligibilityRow = {
   team_id: number;
@@ -55,6 +56,11 @@ function getMissingEvidenceReasons(config: any, statusRow: { attachments?: any; 
   return reasons;
 }
 
+function addStaffRole(set: Set<string>, role: string) {
+  const normalized = normalizeStaffRole(role);
+  if (normalized) set.add(normalized);
+}
+
 export async function computeSeasonTeamEligibility(
   db: Kysely<DB>,
   leagueId: number,
@@ -70,7 +76,16 @@ export async function computeSeasonTeamEligibility(
   const seasonTeams = await db
     .selectFrom('league.SeasonTeam as st')
     .innerJoin('league.Teams as t', 't.id', 'st.team_id')
-    .select(['t.id as team_id', 't.name as team_name', 'st.is_finalized', 'st.division_id', 'st.review_status', 'st.review_notes'])
+    .select([
+      't.id as team_id',
+      't.name as team_name',
+      't.coach_name as coach_name',
+      't.user_id as team_owner_user_id',
+      'st.is_finalized',
+      'st.division_id',
+      'st.review_status',
+      'st.review_notes',
+    ])
     .where('st.season_id', '=', seasonId)
     .where('t.league_id', '=', leagueId)
     .execute();
@@ -138,9 +153,19 @@ export async function computeSeasonTeamEligibility(
   for (const row of teamStaff as any[]) {
     const teamId = Number(row.team_id);
     const set = staffRolesByTeam.get(teamId) ?? new Set<string>();
-    set.add(String(row.role));
+    addStaffRole(set, String(row.role));
     staffRolesByTeam.set(teamId, set);
   }
+
+  const teamManagerAssignments = await db
+    .selectFrom('league.team_manager_teams')
+    .select(['team_id'])
+    .where('league_id', '=', leagueId)
+    .where('team_id', 'in', teamIds as any)
+    .execute();
+  const managerAssignedTeamIds = new Set<number>(
+    (teamManagerAssignments as any[]).map((row) => Number(row.team_id)),
+  );
 
   const out: SeasonTeamEligibilityRow[] = [];
   for (const t of seasonTeams as any[]) {
@@ -170,11 +195,19 @@ export async function computeSeasonTeamEligibility(
       const seasonOk = r.season_id == null || Number(r.season_id) === Number(seasonId);
       return divOk && seasonOk;
     });
-    const staffSet = staffRolesByTeam.get(teamId) ?? new Set<string>();
+    const staffSet = new Set(staffRolesByTeam.get(teamId) ?? []);
+    if (String(t.coach_name ?? '').trim()) {
+      addStaffRole(staffSet, 'head_coach');
+      addStaffRole(staffSet, 'coach');
+    }
+    if (t.team_owner_user_id || managerAssignedTeamIds.has(teamId)) {
+      addStaffRole(staffSet, 'team_manager');
+      addStaffRole(staffSet, 'manager');
+    }
     let hasRequiredStaff = true;
     for (const rr of applicableRequiredRoles as any[]) {
       const role = String(rr.role);
-      if (!staffSet.has(role)) {
+      if (!staffSet.has(normalizeStaffRole(role))) {
         hasRequiredStaff = false;
         reasons.push(`missing_staff_role:${role}`);
       }
