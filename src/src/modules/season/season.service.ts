@@ -429,6 +429,7 @@ export class SeasonService {
     const updated = await this.db
       .updateTable('league.team_compliance_items')
       .set({
+        division_id: dto.division_id as any,
         key: dto.key as any,
         label: dto.label as any,
         category: dto.category as any,
@@ -450,6 +451,17 @@ export class SeasonService {
     await this.db
       .updateTable('league.team_compliance_items')
       .set({ archived_at: new Date() as any })
+      .where('id', '=', itemId as any)
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .execute();
+    return { success: true };
+  }
+
+  async deleteComplianceItem(seasonId: number, itemId: number, userId: string) {
+    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    await this.db
+      .deleteFrom('league.team_compliance_items')
       .where('id', '=', itemId as any)
       .where('league_id', '=', membership.league_id)
       .where('season_id', '=', seasonId)

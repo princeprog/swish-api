@@ -57,7 +57,13 @@ export class AuthService {
         await trx
           .insertInto('league.league_members')
           .values({ league_id: invite.league_id, user_id: user.id, role: invite.role })
-          .onConflict((oc) => oc.column('user_id').doNothing())
+          .onConflict((oc) => oc.columns(['league_id', 'user_id']).doNothing())
+          .execute();
+
+        await trx
+          .updateTable('auth.users')
+          .set({ active_league_id: invite.league_id as any })
+          .where('id', '=', user.id)
           .execute();
 
         await trx.updateTable('league.league_invitations').set({ accepted_at: new Date() }).where('id', '=', invite.id).execute();
@@ -100,6 +106,7 @@ export class AuthService {
           .executeTakeFirstOrThrow();
 
         await trx.insertInto('league.league_members').values({ league_id: createdLeague.id, user_id: user.id, role: 'league_admin' }).execute();
+        await trx.updateTable('auth.users').set({ active_league_id: createdLeague.id as any }).where('id', '=', user.id).execute();
 
         await trx
           .updateTable('league.league_admin_invitations')
@@ -123,6 +130,7 @@ export class AuthService {
   }
 
   async login(user: any, response?: Response) {
+    await this.ensureActiveLeagueContext(user.id);
     const membership = await getUserLeagueMembership(this.db, user.id);
     const role = membership?.role ?? 'user';
     const leagueId = membership?.league_id ?? null;
@@ -285,6 +293,7 @@ export class AuthService {
   }
 
   async getProfile(userId: string) {
+    await this.ensureActiveLeagueContext(userId);
     const user = await this.db
       .selectFrom('auth.users')
       .selectAll()
@@ -324,6 +333,86 @@ export class AuthService {
       league_id: leagueId,
       hasLeagueConfigured,
     };
+  }
+
+  async listLeagueContexts(userId: string) {
+    const memberships = await this.db
+      .selectFrom('league.league_members as lm')
+      .innerJoin('league.League as l', 'l.id', 'lm.league_id')
+      .select(['lm.league_id as league_id', 'lm.role as role', 'l.name as league_name', 'lm.created_at as joined_at'])
+      .where('lm.user_id', '=', userId as any)
+      .orderBy('lm.created_at', 'desc')
+      .execute();
+
+    const user = await this.db
+      .selectFrom('auth.users')
+      .select(['active_league_id'])
+      .where('id', '=', userId as any)
+      .executeTakeFirst();
+
+    return {
+      active_league_id: user?.active_league_id ?? null,
+      memberships: memberships.map((m) => ({
+        league_id: Number(m.league_id),
+        league_name: m.league_name,
+        role: m.role,
+        joined_at: m.joined_at,
+      })),
+    };
+  }
+
+  async setActiveLeague(userId: string, leagueId: number) {
+    const membership = await this.db
+      .selectFrom('league.league_members')
+      .select(['league_id'])
+      .where('user_id', '=', userId as any)
+      .where('league_id', '=', leagueId as any)
+      .executeTakeFirst();
+
+    if (!membership) {
+      throw new UnauthorizedException('You are not a member of this league.');
+    }
+
+    await this.db
+      .updateTable('auth.users')
+      .set({ active_league_id: leagueId as any })
+      .where('id', '=', userId as any)
+      .execute();
+
+    return this.getProfile(userId);
+  }
+
+  private async ensureActiveLeagueContext(userId: string) {
+    const user = await this.db
+      .selectFrom('auth.users')
+      .select(['active_league_id'])
+      .where('id', '=', userId as any)
+      .executeTakeFirst();
+
+    if (!user) return;
+
+    if (user.active_league_id) {
+      const hasMembership = await this.db
+        .selectFrom('league.league_members')
+        .select(['league_id'])
+        .where('user_id', '=', userId as any)
+        .where('league_id', '=', user.active_league_id as any)
+        .executeTakeFirst();
+      if (hasMembership) return;
+    }
+
+    const fallback = await this.db
+      .selectFrom('league.league_members')
+      .select(['league_id'])
+      .where('user_id', '=', userId as any)
+      .orderBy('created_at', 'desc')
+      .executeTakeFirst();
+
+    await this.db
+      .updateTable('auth.users')
+      .set({ active_league_id: fallback?.league_id ?? null as any })
+      .where('id', '=', userId as any)
+      .execute();
   }
 
   private async hashRefreshToken(refreshToken: string) {

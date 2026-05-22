@@ -1334,11 +1334,11 @@ export class GameService {
     }
 
     const eligibility = await computeSeasonTeamEligibility(this.db, leagueId, seasonId);
-    const ineligible = eligibility.filter((t) => !t.schedule_eligible);
+    const ineligible = eligibility.filter((t) => !t.schedule_eligible || t.review_status !== 'approved');
     if (ineligible.length > 0) {
       return {
         ready: false,
-        message: 'All season teams must be roster-ready and compliant before creating schedules.',
+        message: 'All season teams must be eligible and admin-approved before creating schedules.',
         rosterSummary: eligibility,
       };
     }

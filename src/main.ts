@@ -1,11 +1,17 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import cookieParser from 'cookie-parser';
+import { json, urlencoded } from 'express';
+import express from 'express';
+import path from 'path';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.use(cookieParser());
+  app.use(json({ limit: '20mb' }));
+  app.use(urlencoded({ limit: '20mb', extended: true }));
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
   app.enableCors({
     origin: (origin, callback) => {

@@ -265,7 +265,13 @@ export class LeagueInvitationService {
           user_id: userId as any,
           role: invite.role,
         })
-        .onConflict((oc) => oc.column('user_id').doNothing())
+        .onConflict((oc) => oc.columns(['league_id', 'user_id']).doNothing())
+        .execute();
+
+      await trx
+        .updateTable('auth.users')
+        .set({ active_league_id: invite.league_id as any })
+        .where('id', '=', userId as any)
         .execute();
 
       await trx

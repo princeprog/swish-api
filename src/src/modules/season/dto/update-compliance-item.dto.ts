@@ -1,4 +1,5 @@
 export class UpdateComplianceItemDto {
+  division_id?: number | null;
   key?: string;
   label?: string;
   category?: string;

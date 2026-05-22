@@ -10,6 +10,8 @@ import { computeSeasonTeamEligibility } from './team-eligibility';
 import { UpsertComplianceStatusDto } from './dto/upsert-compliance-status.dto';
 import { UpsertSeasonTeamIdentityDto } from './dto/upsert-season-team-identity.dto';
 import { UpsertTeamAvailabilityDto } from './dto/upsert-team-availability.dto';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class TeamService {
@@ -18,6 +20,48 @@ export class TeamService {
     private readonly gameService: GameService,
   ) {}
 
+  private getValidationMode(config: any): 'auto' | 'evidence' {
+    return config?.validation_mode === 'auto' ? 'auto' : 'evidence';
+  }
+
+  private getAutoSource(config: any, item: { key?: string | null; category?: string | null }): string {
+    if (typeof config?.auto_source === 'string' && config.auto_source.trim()) {
+      return config.auto_source.trim();
+    }
+    if (item.category === 'identity') return 'team_identity';
+    if (item.key?.includes('staff') || item.key?.includes('coach') || item.category === 'contacts') return 'required_staff_roles';
+    if (item.key?.includes('roster')) return 'roster_count';
+    return 'team_identity';
+  }
+
+  private getMissingEvidenceReasons(config: any, statusRow: { attachments?: any; notes?: string | null } | null): string[] {
+    const evidenceRules = (config?.evidence_rules ?? {}) as any;
+    const minFiles = Number(evidenceRules.min_files ?? 1);
+    const allowNotes = Boolean(evidenceRules.allow_notes ?? false);
+    const attachments = Array.isArray(statusRow?.attachments) ? statusRow!.attachments : [];
+    const notes = (statusRow?.notes ?? '').trim();
+    const reasons: string[] = [];
+    if (attachments.length < minFiles) reasons.push('missing_evidence_files');
+    if (allowNotes && !notes && attachments.length === 0) reasons.push('missing_evidence_note');
+    return reasons;
+  }
+
+  private getWorkflowStateFromMeta(meta: any, status: string | null | undefined): 'draft' | 'submitted' | 'needs_revision' | 'approved' {
+    const state = String(meta?.workflow_state ?? '').trim();
+    if (state === 'draft' || state === 'submitted' || state === 'needs_revision' || state === 'approved') return state as any;
+    return status === 'complete' ? 'approved' : 'draft';
+  }
+
+  private jsonSafe<T = any>(value: any, fallback: T): T {
+    try {
+      if (value === null || value === undefined) return fallback;
+      const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+      return JSON.parse(JSON.stringify(parsed)) as T;
+    } catch {
+      return fallback;
+    }
+  }
+
   async create(createTeamDto: CreateTeamDto, userId: string) {
     const membership = await getUserLeagueMembership(this.db, userId);
 
@@ -25,20 +69,82 @@ export class TeamService {
       throw new UnauthorizedException('User has no league configured.');
     }
 
-    const team = await this.db
-      .insertInto('league.Teams')
-      .values({
-        league_id: membership.league_id,
-        name: createTeamDto.name,
-        abbreviation: createTeamDto.abbreviation,
-        coach_name: createTeamDto.coach_name,
-        primary_color: createTeamDto.primary_color,
-        secondary_color: createTeamDto.secondary_color,
-        logo_url: '',
-        user_id: userId as any,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const team = await this.db.transaction().execute(async (trx) => {
+      const createdTeam = await trx
+        .insertInto('league.Teams')
+        .values({
+          league_id: membership.league_id,
+          name: createTeamDto.name,
+          abbreviation: createTeamDto.abbreviation,
+          coach_name: createTeamDto.coach_name,
+          primary_color: createTeamDto.primary_color,
+          secondary_color: createTeamDto.secondary_color,
+          logo_url: '',
+          user_id: userId as any,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      if (createTeamDto.season_id !== undefined && createTeamDto.season_id !== null) {
+        const seasonId = Number(createTeamDto.season_id);
+        if (!Number.isFinite(seasonId) || seasonId <= 0) {
+          throw new BadRequestException('season_id is invalid.');
+        }
+
+        const season = await trx
+          .selectFrom('league.Season')
+          .select(['id'])
+          .where('id', '=', seasonId)
+          .where('league_id', '=', membership.league_id)
+          .executeTakeFirst();
+        if (!season) {
+          throw new NotFoundException('Season not found in your league.');
+        }
+
+        const divisions = await trx
+          .selectFrom('league.SeasonDivision')
+          .select(['id', 'code'])
+          .where('season_id', '=', seasonId)
+          .where('archived_at', 'is', null)
+          .orderBy('sort_order', 'asc')
+          .orderBy('id', 'asc')
+          .execute();
+
+        if (divisions.length === 0) {
+          throw new BadRequestException('No active divisions configured for this season.');
+        }
+
+        let resolvedDivisionId: number | null = createTeamDto.division_id ?? null;
+
+        if (resolvedDivisionId === null) {
+          if (divisions.length === 1) {
+            resolvedDivisionId = Number(divisions[0].id);
+          } else {
+            throw new BadRequestException('division_id is required when season has multiple divisions.');
+          }
+        } else {
+          const isValidDivision = divisions.some((d) => Number(d.id) === Number(resolvedDivisionId));
+          if (!isValidDivision) {
+            throw new BadRequestException('Selected division does not belong to this season.');
+          }
+        }
+
+        const selectedDivision = divisions.find((d) => Number(d.id) === Number(resolvedDivisionId));
+        const bracket = String(selectedDivision?.code ?? 'main').trim() || 'main';
+
+        await trx
+          .insertInto('league.SeasonTeam')
+          .values({
+            season_id: seasonId,
+            team_id: Number(createdTeam.id),
+            division_id: Number(resolvedDivisionId),
+            bracket,
+          } as any)
+          .execute();
+      }
+
+      return createdTeam;
+    });
 
     return {
       success: true,
@@ -223,6 +329,8 @@ export class TeamService {
       ineligible_player_ids: number[];
       finalized_by_user_id: string | null;
       finalized_at: Date | null;
+      review_status: 'draft' | 'submitted' | 'approved' | 'rejected';
+      review_notes: string | null;
     }> = [];
     for (const team of seasonTeams) {
       const countRow = await this.db
@@ -272,7 +380,7 @@ export class TeamService {
       }
       const seasonTeamMeta = await this.db
         .selectFrom('league.SeasonTeam')
-        .select(['is_finalized', 'finalized_by_user_id', 'finalized_at'])
+        .select(['is_finalized', 'finalized_by_user_id', 'finalized_at', 'review_status', 'review_notes'])
         .where('season_id', '=', seasonId)
         .where('team_id', '=', team.id)
         .executeTakeFirstOrThrow();
@@ -296,6 +404,8 @@ export class TeamService {
         ineligible_player_ids: ineligible,
         finalized_by_user_id: seasonTeamMeta.finalized_by_user_id,
         finalized_at: seasonTeamMeta.finalized_at as any,
+        review_status: (seasonTeamMeta.review_status as any) ?? 'draft',
+        review_notes: seasonTeamMeta.review_notes ?? null,
       });
     }
 
@@ -362,6 +472,12 @@ export class TeamService {
         finalized_by_user_id: userId,
         finalized_at: new Date() as any,
         min_required_players_snapshot: row.min_required,
+        review_status: 'draft' as any,
+        approved_at: null as any,
+        approved_by_user_id: null as any,
+        rejected_at: null as any,
+        rejected_by_user_id: null as any,
+        review_notes: null as any,
       })
       .where('season_id', '=', seasonId)
       .where('team_id', '=', teamId)
@@ -399,6 +515,115 @@ export class TeamService {
         is_finalized: false as any,
         finalized_by_user_id: null as any,
         finalized_at: null as any,
+        review_status: 'draft' as any,
+        submitted_at: null as any,
+        submitted_by_user_id: null as any,
+        approved_at: null as any,
+        approved_by_user_id: null as any,
+        rejected_at: null as any,
+        rejected_by_user_id: null as any,
+        review_notes: null as any,
+      })
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .execute();
+    return { success: true };
+  }
+
+  async submitTeamForReview(teamId: number, seasonId: number, userId: string) {
+    const { membership, team } = await this.assertCanManageTeam(teamId, userId);
+    if (membership.role !== 'team_manager' && team.user_id !== userId) {
+      throw new ForbiddenException('Only team managers can submit teams for review.');
+    }
+
+    const eligibility = await this.getSeasonTeamEligibility(seasonId, userId);
+    const row = eligibility.teams.find((t) => Number(t.team_id) === Number(teamId));
+    if (!row) throw new NotFoundException('Team is not assigned to selected season.');
+    if (!row.schedule_eligible) {
+      throw new BadRequestException('Complete all season requirements before submitting for review.');
+    }
+
+    await this.db
+      .updateTable('league.SeasonTeam')
+      .set({
+        review_status: 'submitted' as any,
+        submitted_at: new Date() as any,
+        submitted_by_user_id: userId as any,
+        approved_at: null as any,
+        approved_by_user_id: null as any,
+        rejected_at: null as any,
+        rejected_by_user_id: null as any,
+      })
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .execute();
+
+    return { success: true };
+  }
+
+  async approveTeamForSeason(teamId: number, seasonId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    if (membership.role !== 'league_admin') throw new ForbiddenException('Only league admins can approve teams.');
+
+    const eligibility = await this.getSeasonTeamEligibility(seasonId, userId);
+    const row = eligibility.teams.find((t) => Number(t.team_id) === Number(teamId));
+    if (!row) throw new NotFoundException('Team is not assigned to selected season.');
+    if (!row.schedule_eligible) {
+      throw new BadRequestException('Team is not eligible yet. Resolve blockers before approval.');
+    }
+
+    await this.db
+      .updateTable('league.SeasonTeam')
+      .set({
+        review_status: 'approved' as any,
+        approved_at: new Date() as any,
+        approved_by_user_id: userId as any,
+        rejected_at: null as any,
+        rejected_by_user_id: null as any,
+      })
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .execute();
+    return { success: true };
+  }
+
+  async rejectTeamForSeason(teamId: number, seasonId: number, reviewNotes: string | null, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    if (membership.role !== 'league_admin') throw new ForbiddenException('Only league admins can reject teams.');
+
+    await this.db
+      .updateTable('league.SeasonTeam')
+      .set({
+        review_status: 'rejected' as any,
+        rejected_at: new Date() as any,
+        rejected_by_user_id: userId as any,
+        review_notes: reviewNotes?.trim() || null,
+        approved_at: null as any,
+        approved_by_user_id: null as any,
+      })
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .execute();
+    return { success: true };
+  }
+
+  async reopenTeamReview(teamId: number, seasonId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    if (membership.role !== 'league_admin') throw new ForbiddenException('Only league admins can reopen team review.');
+
+    await this.db
+      .updateTable('league.SeasonTeam')
+      .set({
+        review_status: 'draft' as any,
+        submitted_at: null as any,
+        submitted_by_user_id: null as any,
+        approved_at: null as any,
+        approved_by_user_id: null as any,
+        rejected_at: null as any,
+        rejected_by_user_id: null as any,
       })
       .where('season_id', '=', seasonId)
       .where('team_id', '=', teamId)
@@ -496,18 +721,229 @@ export class TeamService {
       .execute();
     const byItem = new Map<number, any>(statuses.map((s: any) => [Number(s.item_id), s]));
 
+    const eligibility = await this.getSeasonTeamEligibility(seasonId, userId);
+    const eligibilityRow = eligibility.teams.find((t) => Number(t.team_id) === Number(teamId));
+    const reasons = eligibilityRow?.reasons ?? [];
+
+    const seasonTeamMeta = await this.db
+      .selectFrom('league.SeasonTeam')
+      .select(['review_status'])
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .executeTakeFirst();
+
     return items.map((it: any) => {
       const st = byItem.get(Number(it.id));
+      const stMeta = this.jsonSafe<Record<string, any>>(st?.meta, {});
+      const stAttachments = this.jsonSafe<any[]>(st?.attachments, []);
+      const validationMode = this.getValidationMode(it.config);
+      const autoSource = validationMode === 'auto' ? this.getAutoSource(it.config, it) : null;
+      const missingEvidenceReasons =
+        validationMode === 'evidence' ? this.getMissingEvidenceReasons(it.config, { attachments: stAttachments, notes: st?.notes ?? null }) : [];
+      let isAutoComplete = false;
+      if (validationMode === 'auto') {
+        if (autoSource === 'team_identity') isAutoComplete = !reasons.includes('missing_team_identity');
+        else if (autoSource === 'required_staff_roles') isAutoComplete = !reasons.some((r) => r.startsWith('missing_staff_role:'));
+        else if (autoSource === 'roster_count') isAutoComplete = !reasons.includes('insufficient_active_players');
+      }
+      const status = validationMode === 'auto' ? (isAutoComplete ? 'complete' : 'pending') : (st?.status ?? 'pending');
+      const workflowState =
+        validationMode === 'auto'
+          ? 'auto'
+          : this.getWorkflowStateFromMeta(stMeta, st?.status ?? null);
+      const reviewRemarks = String(stMeta?.review_remarks ?? '').trim() || null;
+      const canEdit = validationMode !== 'auto' && seasonTeamMeta?.review_status !== 'approved';
+      const canSubmit = validationMode !== 'auto' && canEdit;
+      const canReview = membership.role === 'league_admin';
       return {
         ...it,
-        status: st?.status ?? 'pending',
+        status,
         notes: st?.notes ?? null,
-        attachments: st?.attachments ?? [],
-        meta: st?.meta ?? {},
+        attachments: stAttachments,
+        meta: stMeta,
         updated_at: st?.updated_at ?? null,
         updated_by_user_id: st?.updated_by_user_id ?? null,
+        validation_mode: validationMode,
+        auto_source: autoSource,
+        is_auto_complete: isAutoComplete,
+        missing_evidence_reasons: missingEvidenceReasons,
+        workflow_state: workflowState,
+        review_remarks: reviewRemarks,
+        can_submit: canSubmit,
+        can_edit: canEdit,
+        can_review: canReview,
       };
     });
+  }
+
+  private async getComplianceItemForTeamContext(teamId: number, seasonId: number, itemId: number, userId: string) {
+    const { membership } = await this.assertCanManageTeam(teamId, userId);
+    const item = await this.db
+      .selectFrom('league.team_compliance_items')
+      .select(['id', 'league_id', 'season_id', 'division_id', 'archived_at', 'is_required', 'config', 'key', 'category'])
+      .where('id', '=', itemId as any)
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .executeTakeFirst();
+    if (!item || item.archived_at) throw new NotFoundException('Compliance item not found.');
+    return { membership, item };
+  }
+
+  private async getExistingComplianceStatus(leagueId: number, seasonId: number, teamId: number, itemId: number) {
+    return this.db
+      .selectFrom('league.team_compliance_status')
+      .selectAll()
+      .where('league_id', '=', leagueId)
+      .where('season_id', '=', seasonId)
+      .where('team_id', '=', teamId)
+      .where('item_id', '=', itemId as any)
+      .executeTakeFirst();
+  }
+
+  async saveComplianceEvidence(teamId: number, seasonId: number, itemId: number, body: { attachments?: any[]; notes?: string | null }, userId: string) {
+    const { membership, item } = await this.getComplianceItemForTeamContext(teamId, seasonId, itemId, userId);
+    if (this.getValidationMode((item as any).config) === 'auto') {
+      throw new BadRequestException('This requirement is auto-validated and cannot be manually updated.');
+    }
+    const existing = await this.getExistingComplianceStatus(membership.league_id, seasonId, teamId, itemId);
+    const currentMeta = this.jsonSafe<Record<string, any>>(existing?.meta, {});
+    const nextMeta = { ...currentMeta, workflow_state: 'draft', review_remarks: null };
+    if (!existing) {
+      const inserted = await this.db.insertInto('league.team_compliance_status').values({
+        league_id: membership.league_id,
+        season_id: seasonId,
+        team_id: teamId,
+        item_id: itemId as any,
+        status: 'pending',
+        notes: body.notes ?? null,
+          attachments: JSON.stringify(this.jsonSafe<any[]>(body.attachments, [])) as any,
+          meta: JSON.stringify(this.jsonSafe<Record<string, any>>(nextMeta, {})) as any,
+        updated_by_user_id: userId,
+        updated_at: new Date() as any,
+      }).returningAll().executeTakeFirstOrThrow();
+      return { success: true, status: inserted };
+    }
+    const updated = await this.db.updateTable('league.team_compliance_status').set({
+      status: 'pending',
+      notes: body.notes ?? existing.notes ?? null,
+      attachments: JSON.stringify(this.jsonSafe<any[]>(body.attachments ?? existing.attachments, [])) as any,
+      meta: JSON.stringify(this.jsonSafe<Record<string, any>>(nextMeta, {})) as any,
+      updated_by_user_id: userId,
+      updated_at: new Date() as any,
+    }).where('id', '=', existing.id as any).returningAll().executeTakeFirstOrThrow();
+    return { success: true, status: updated };
+  }
+
+  async submitComplianceEvidence(teamId: number, seasonId: number, itemId: number, body: { notes?: string | null }, userId: string) {
+    const { membership, item } = await this.getComplianceItemForTeamContext(teamId, seasonId, itemId, userId);
+    if (this.getValidationMode((item as any).config) === 'auto') {
+      throw new BadRequestException('This requirement is auto-validated and cannot be manually submitted.');
+    }
+    const existing = await this.getExistingComplianceStatus(membership.league_id, seasonId, teamId, itemId);
+    const attachments = this.jsonSafe<any[]>(existing?.attachments, []);
+    const notes = body.notes ?? existing?.notes ?? null;
+    const missingEvidence = this.getMissingEvidenceReasons((item as any).config, { attachments, notes });
+    if (missingEvidence.length > 0) {
+      throw new BadRequestException(`Evidence is required before submission: ${missingEvidence.join(', ')}`);
+    }
+    if (!existing) {
+      const inserted = await this.db.insertInto('league.team_compliance_status').values({
+        league_id: membership.league_id,
+        season_id: seasonId,
+        team_id: teamId,
+        item_id: itemId as any,
+        status: 'pending',
+        notes,
+        attachments: JSON.stringify(this.jsonSafe<any[]>(attachments, [])) as any,
+        meta: JSON.stringify(this.jsonSafe<Record<string, any>>({ workflow_state: 'submitted', review_remarks: null }, {})) as any,
+        updated_by_user_id: userId,
+        updated_at: new Date() as any,
+      }).returningAll().executeTakeFirstOrThrow();
+      return { success: true, status: inserted };
+    }
+    const updated = await this.db.updateTable('league.team_compliance_status').set({
+      status: 'pending',
+      notes,
+      meta: JSON.stringify(this.jsonSafe<Record<string, any>>({ ...this.jsonSafe<Record<string, any>>(existing.meta, {}), workflow_state: 'submitted', review_remarks: null }, {})) as any,
+      updated_by_user_id: userId,
+      updated_at: new Date() as any,
+    }).where('id', '=', existing.id as any).returningAll().executeTakeFirstOrThrow();
+    return { success: true, status: updated };
+  }
+
+  async removeComplianceEvidence(teamId: number, seasonId: number, itemId: number, index: number, userId: string) {
+    const { membership, item } = await this.getComplianceItemForTeamContext(teamId, seasonId, itemId, userId);
+    if (this.getValidationMode((item as any).config) === 'auto') {
+      throw new BadRequestException('This requirement is auto-validated and has no evidence files.');
+    }
+    const existing = await this.getExistingComplianceStatus(membership.league_id, seasonId, teamId, itemId);
+    if (!existing) throw new NotFoundException('Evidence record not found.');
+    const attachments = [...this.jsonSafe<any[]>(existing.attachments, [])];
+    if (index < 0 || index >= attachments.length) throw new BadRequestException('Invalid evidence index.');
+    attachments.splice(index, 1);
+    const updated = await this.db.updateTable('league.team_compliance_status').set({
+      attachments: JSON.stringify(this.jsonSafe<any[]>(attachments, [])) as any,
+      status: 'pending',
+      meta: JSON.stringify(this.jsonSafe<Record<string, any>>({ ...this.jsonSafe<Record<string, any>>(existing.meta, {}), workflow_state: 'draft' }, {})) as any,
+      updated_by_user_id: userId,
+      updated_at: new Date() as any,
+    }).where('id', '=', existing.id as any).returningAll().executeTakeFirstOrThrow();
+    return { success: true, status: updated };
+  }
+
+  async approveComplianceItem(teamId: number, seasonId: number, itemId: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    if (membership.role !== 'league_admin') throw new ForbiddenException('Only league admins can approve requirement items.');
+    const existing = await this.getExistingComplianceStatus(membership.league_id, seasonId, teamId, itemId);
+    if (!existing) throw new NotFoundException('Evidence record not found.');
+    const updated = await this.db.updateTable('league.team_compliance_status').set({
+      status: 'complete',
+      meta: JSON.stringify(this.jsonSafe<Record<string, any>>({ ...this.jsonSafe<Record<string, any>>(existing.meta, {}), workflow_state: 'approved', review_remarks: null }, {})) as any,
+      updated_by_user_id: userId,
+      updated_at: new Date() as any,
+    }).where('id', '=', existing.id as any).returningAll().executeTakeFirstOrThrow();
+    return { success: true, status: updated };
+  }
+
+  async rejectComplianceItem(teamId: number, seasonId: number, itemId: number, remarks: string | null, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+    if (!membership) throw new UnauthorizedException('User has no league configured.');
+    if (membership.role !== 'league_admin') throw new ForbiddenException('Only league admins can reject requirement items.');
+    const existing = await this.getExistingComplianceStatus(membership.league_id, seasonId, teamId, itemId);
+    if (!existing) throw new NotFoundException('Evidence record not found.');
+    const updated = await this.db.updateTable('league.team_compliance_status').set({
+      status: 'pending',
+      meta: JSON.stringify(this.jsonSafe<Record<string, any>>({ ...this.jsonSafe<Record<string, any>>(existing.meta, {}), workflow_state: 'needs_revision', review_remarks: remarks?.trim() || null }, {})) as any,
+      updated_by_user_id: userId,
+      updated_at: new Date() as any,
+    }).where('id', '=', existing.id as any).returningAll().executeTakeFirstOrThrow();
+    return { success: true, status: updated };
+  }
+
+  async uploadComplianceEvidence(teamId: number, seasonId: number, itemId: number, file: any, userId: string) {
+    if (!file) throw new BadRequestException('file is required.');
+    const { item } = await this.getComplianceItemForTeamContext(teamId, seasonId, itemId, userId);
+    if (this.getValidationMode((item as any).config) === 'auto') {
+      throw new BadRequestException('This requirement is auto-validated and does not accept file uploads.');
+    }
+    const dir = path.join(process.cwd(), 'uploads', 'compliance');
+    fs.mkdirSync(dir, { recursive: true });
+    const safeName = String(file.originalname || 'evidence').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const filename = `${Date.now()}-${safeName}`;
+    const filePath = path.join(dir, filename);
+    fs.writeFileSync(filePath, file.buffer);
+    const relativePath = `/uploads/compliance/${filename}`;
+    return {
+      success: true,
+      file: {
+        name: file.originalname,
+        type: file.mimetype,
+        size: file.size,
+        url: relativePath,
+        uploaded_at: new Date().toISOString(),
+      },
+    };
   }
 
   async upsertTeamComplianceStatus(teamId: number, seasonId: number, dto: UpsertComplianceStatusDto, userId: string) {
@@ -515,7 +951,7 @@ export class TeamService {
 
     const item = await this.db
       .selectFrom('league.team_compliance_items')
-      .select(['id', 'league_id', 'season_id', 'division_id', 'archived_at', 'is_required'])
+      .select(['id', 'league_id', 'season_id', 'division_id', 'archived_at', 'is_required', 'config', 'key', 'category'])
       .where('id', '=', dto.item_id as any)
       .where('league_id', '=', membership.league_id)
       .where('season_id', '=', seasonId)
@@ -525,6 +961,21 @@ export class TeamService {
     // Team managers can only set pending/complete. Waive is admin-only for now.
     if (dto.status !== 'pending' && dto.status !== 'complete') {
       throw new BadRequestException('Invalid compliance status.');
+    }
+
+    const validationMode = this.getValidationMode((item as any).config);
+    if (validationMode === 'auto') {
+      throw new BadRequestException('This requirement is auto-validated and cannot be manually updated.');
+    }
+
+    if (dto.status === 'complete') {
+      const missingEvidence = this.getMissingEvidenceReasons((item as any).config, {
+        attachments: JSON.stringify(this.jsonSafe<any[]>(dto.attachments, [])),
+        notes: dto.notes ?? null,
+      });
+      if (missingEvidence.length > 0) {
+        throw new BadRequestException(`Evidence is required before completion: ${missingEvidence.join(', ')}`);
+      }
     }
 
     const existing = await this.db
@@ -546,8 +997,8 @@ export class TeamService {
           item_id: dto.item_id as any,
           status: dto.status,
           notes: dto.notes ?? null,
-          attachments: (dto.attachments ?? []) as any,
-          meta: (dto.meta ?? {}) as any,
+          attachments: JSON.stringify(this.jsonSafe<any[]>(dto.attachments, [])) as any,
+          meta: JSON.stringify(this.jsonSafe<Record<string, any>>(dto.meta, {})) as any,
           updated_by_user_id: userId,
           updated_at: new Date() as any,
         })
@@ -561,8 +1012,8 @@ export class TeamService {
       .set({
         status: dto.status,
         notes: dto.notes ?? null,
-        attachments: (dto.attachments ?? []) as any,
-        meta: (dto.meta ?? {}) as any,
+        attachments: JSON.stringify(this.jsonSafe<any[]>(dto.attachments, [])) as any,
+        meta: JSON.stringify(this.jsonSafe<Record<string, any>>(dto.meta, {})) as any,
         updated_by_user_id: userId,
         updated_at: new Date() as any,
       })

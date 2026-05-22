@@ -85,13 +85,7 @@ export class LeagueAdminInvitationService {
     const existingUser = await this.usersService.findByEmail(normalizedEmail);
 
     if (existingUser) {
-      // If the user already belongs to a league, they can't become a new-league admin (one membership per user).
-      const existingMembership = await getUserLeagueMembership(this.db, existingUser.id);
-      if (existingMembership) {
-        throw new BadRequestException('This user already belongs to a league.');
-      }
-
-      // Create a blank league immediately so the user becomes a league_admin, then redirect into the setup wizard.
+      // Create a blank league immediately so the user becomes a league_admin for the new league.
       await this.acceptInviteForExistingUser(invite, existingUser.id);
       return { action: 'accepted', redirectTo: `${this.frontendUrl()}/login?invite=accepted&next=/admin/configure-league` };
     }
@@ -126,6 +120,13 @@ export class LeagueAdminInvitationService {
       await trx
         .insertInto('league.league_members')
         .values({ league_id: createdLeague.id, user_id: userId as any, role: 'league_admin' })
+        .onConflict((oc) => oc.columns(['league_id', 'user_id']).doNothing())
+        .execute();
+
+      await trx
+        .updateTable('auth.users')
+        .set({ active_league_id: createdLeague.id as any })
+        .where('id', '=', userId as any)
         .execute();
 
       await trx

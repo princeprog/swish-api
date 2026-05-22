@@ -35,6 +35,7 @@ export interface AuthSessions {
 }
 
 export interface AuthUsers {
+  active_league_id: number | null;
   created_at: Generated<Timestamp>;
   email: string;
   full_name: string | null;
@@ -180,13 +181,21 @@ export interface LeagueSeasonDivision {
 }
 
 export interface LeagueSeasonTeam {
+  approved_at: Timestamp | null;
+  approved_by_user_id: string | null;
   bracket: string;
   division_id: number;
   finalized_at: Timestamp | null;
   finalized_by_user_id: string | null;
   is_finalized: Generated<boolean>;
   min_required_players_snapshot: number | null;
+  rejected_at: Timestamp | null;
+  rejected_by_user_id: string | null;
+  review_notes: string | null;
+  review_status: Generated<string>;
   season_id: number;
+  submitted_at: Timestamp | null;
+  submitted_by_user_id: string | null;
   team_id: number;
 }
 

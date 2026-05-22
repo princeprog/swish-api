@@ -32,6 +32,12 @@ export class LeagueService {
         role: 'league_admin',
       }).execute();
 
+      await trx
+        .updateTable('auth.users')
+        .set({ active_league_id: createdLeague.id as any })
+        .where('id', '=', userId as any)
+        .execute();
+
       return createdLeague;
     });
 

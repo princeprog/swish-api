@@ -39,6 +39,18 @@ export class AuthController {
     return this.authService.getProfile(userId);
   }
 
+  @UseGuards(AuthGuard)
+  @Get('league-contexts')
+  async getLeagueContexts(@Req() req: any) {
+    return this.authService.listLeagueContexts(req.user.sub);
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('active-league')
+  async setActiveLeague(@Req() req: any, @Body() body: { league_id: number }) {
+    return this.authService.setActiveLeague(req.user.sub, Number(body?.league_id));
+  }
+
   @Post('create-account-from-invite')
   async createAccountFromInvite(
     @Body() dto: CreateAccountFromInviteDto,

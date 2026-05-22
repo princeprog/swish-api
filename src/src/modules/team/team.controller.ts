@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards, Req, Delete, Patch } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards, Req, Delete, Patch, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { TeamService } from './team.service';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { CreateRosterPlayerDto } from './dto/create-roster-player.dto';
@@ -8,6 +8,7 @@ import { UpdateTeamStaffDto } from './dto/update-team-staff.dto';
 import { UpsertComplianceStatusDto } from './dto/upsert-compliance-status.dto';
 import { UpsertSeasonTeamIdentityDto } from './dto/upsert-season-team-identity.dto';
 import { UpsertTeamAvailabilityDto } from './dto/upsert-team-availability.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @UseGuards(AuthGuard)
 @Controller('team')
@@ -48,6 +49,80 @@ export class TeamController {
     @Req() req: any,
   ) {
     return this.teamService.upsertTeamComplianceStatus(+id, +seasonId, dto, req.user.sub);
+  }
+
+  @Post(':id/compliance/:itemId/save-evidence')
+  saveEvidence(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Query('season_id') seasonId: string,
+    @Body() body: { attachments?: any[]; notes?: string | null },
+    @Req() req: any,
+  ) {
+    return this.teamService.saveComplianceEvidence(+id, +seasonId, +itemId, body, req.user.sub);
+  }
+
+  @Post(':id/compliance/:itemId/submit')
+  submitEvidenceItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Query('season_id') seasonId: string,
+    @Body() body: { notes?: string | null },
+    @Req() req: any,
+  ) {
+    return this.teamService.submitComplianceEvidence(+id, +seasonId, +itemId, body, req.user.sub);
+  }
+
+  @Delete(':id/compliance/:itemId/evidence/:index')
+  removeEvidenceItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Param('index') index: string,
+    @Query('season_id') seasonId: string,
+    @Req() req: any,
+  ) {
+    return this.teamService.removeComplianceEvidence(+id, +seasonId, +itemId, +index, req.user.sub);
+  }
+
+  @Post(':id/compliance/:itemId/upload')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        const allowed = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+        cb(null, allowed.includes(file.mimetype));
+      },
+    }),
+  )
+  uploadComplianceEvidence(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Query('season_id') seasonId: string,
+    @UploadedFile() file: any,
+    @Req() req: any,
+  ) {
+    return this.teamService.uploadComplianceEvidence(+id, +seasonId, +itemId, file, req.user.sub);
+  }
+
+  @Post(':id/compliance/:itemId/approve')
+  approveComplianceItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Query('season_id') seasonId: string,
+    @Req() req: any,
+  ) {
+    return this.teamService.approveComplianceItem(+id, +seasonId, +itemId, req.user.sub);
+  }
+
+  @Post(':id/compliance/:itemId/reject')
+  rejectComplianceItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Query('season_id') seasonId: string,
+    @Body() body: { remarks?: string | null },
+    @Req() req: any,
+  ) {
+    return this.teamService.rejectComplianceItem(+id, +seasonId, +itemId, body?.remarks ?? null, req.user.sub);
   }
 
   @Get(':id/identity')
@@ -115,6 +190,31 @@ export class TeamController {
     @Req() req: any,
   ) {
     return this.teamService.reopenRoster(+id, +seasonId, req.user.sub);
+  }
+
+  @Post(':id/review/submit')
+  submitForReview(@Param('id') id: string, @Query('season_id') seasonId: string, @Req() req: any) {
+    return this.teamService.submitTeamForReview(+id, +seasonId, req.user.sub);
+  }
+
+  @Post(':id/review/approve')
+  approveForSeason(@Param('id') id: string, @Query('season_id') seasonId: string, @Req() req: any) {
+    return this.teamService.approveTeamForSeason(+id, +seasonId, req.user.sub);
+  }
+
+  @Post(':id/review/reject')
+  rejectForSeason(
+    @Param('id') id: string,
+    @Query('season_id') seasonId: string,
+    @Body() body: { review_notes?: string | null },
+    @Req() req: any,
+  ) {
+    return this.teamService.rejectTeamForSeason(+id, +seasonId, body?.review_notes ?? null, req.user.sub);
+  }
+
+  @Post(':id/review/reopen')
+  reopenReview(@Param('id') id: string, @Query('season_id') seasonId: string, @Req() req: any) {
+    return this.teamService.reopenTeamReview(+id, +seasonId, req.user.sub);
   }
 
   @Get(':id/staff')

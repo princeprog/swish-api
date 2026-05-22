@@ -104,6 +104,11 @@ export class SeasonController {
     return this.seasonService.archiveComplianceItem(+id, +itemId, req.user.sub);
   }
 
+  @Delete(':id/compliance-items/:itemId')
+  deleteComplianceItem(@Param('id') id: string, @Param('itemId') itemId: string, @Req() req: any) {
+    return this.seasonService.deleteComplianceItem(+id, +itemId, req.user.sub);
+  }
+
   // Required staff roles (league_admin only)
   @Get(':id/required-staff-roles')
   listRequiredStaffRoles(@Param('id') id: string, @Req() req: any) {
