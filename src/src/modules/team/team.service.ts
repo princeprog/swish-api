@@ -47,6 +47,17 @@ export class TeamService {
     return reasons;
   }
 
+  private getRosterRules(config: any, fallbackMin: number): { minPlayers: number; maxPlayers: number | null } {
+    const rules = (config?.roster_rules ?? {}) as any;
+    const minPlayers = Number(rules.min_players ?? config?.min_players ?? fallbackMin);
+    const rawMax = rules.max_players ?? config?.max_players ?? null;
+    const maxPlayers = rawMax === null || rawMax === undefined || rawMax === '' ? null : Number(rawMax);
+    return {
+      minPlayers: Number.isFinite(minPlayers) && minPlayers > 0 ? minPlayers : fallbackMin,
+      maxPlayers: maxPlayers !== null && Number.isFinite(maxPlayers) && maxPlayers > 0 ? maxPlayers : null,
+    };
+  }
+
   private getWorkflowStateFromMeta(meta: any, status: string | null | undefined): 'draft' | 'submitted' | 'needs_revision' | 'approved' {
     const state = String(meta?.workflow_state ?? '').trim();
     if (state === 'draft' || state === 'submitted' || state === 'needs_revision' || state === 'approved') return state as any;
@@ -743,9 +754,13 @@ export class TeamService {
         validationMode === 'evidence' ? this.getMissingEvidenceReasons(it.config, { attachments: stAttachments, notes: st?.notes ?? null }) : [];
       let isAutoComplete = false;
       if (validationMode === 'auto') {
-        if (autoSource === 'team_identity') isAutoComplete = !reasons.includes('missing_team_identity');
-        else if (autoSource === 'required_staff_roles') isAutoComplete = !reasons.some((r) => r.startsWith('missing_staff_role:'));
-        else if (autoSource === 'roster_count') isAutoComplete = !reasons.includes('insufficient_active_players');
+        if (autoSource === 'team_identity') isAutoComplete = Boolean(eligibilityRow?.has_required_identity);
+        else if (autoSource === 'required_staff_roles') isAutoComplete = Boolean(eligibilityRow?.has_required_staff);
+        else if (autoSource === 'roster_count') {
+          const activeCount = Number(eligibilityRow?.active_roster_count ?? 0);
+          const rules = this.getRosterRules(it.config, Number(eligibilityRow?.min_required_roster_players ?? 5));
+          isAutoComplete = activeCount >= rules.minPlayers && (rules.maxPlayers === null || activeCount <= rules.maxPlayers);
+        }
       }
       const status = validationMode === 'auto' ? (isAutoComplete ? 'complete' : 'pending') : (st?.status ?? 'pending');
       const workflowState =
@@ -776,52 +791,7 @@ export class TeamService {
       };
     });
 
-    const makeSystemRequirement = (key: string, label: string, blocking: boolean, reasonCode: string, category = 'system') => ({
-      id: `system:${key}`,
-      key: `system:${key}`,
-      label,
-      source: 'system',
-      category,
-      validation_mode: 'auto',
-      status: blocking ? 'pending' : 'complete',
-      blocking,
-      reason_code: reasonCode,
-      review_remarks: null,
-      attachments: [],
-    });
-
-    const requirementRows: any[] = [
-      makeSystemRequirement(
-        'roster_count',
-        `Minimum roster players (${eligibilityRow?.min_required_roster_players ?? 5})`,
-        reasons.includes('insufficient_active_players'),
-        'insufficient_active_players',
-        'eligibility',
-      ),
-      makeSystemRequirement(
-        'roster_finalized',
-        'Roster finalized',
-        reasons.includes('not_finalized'),
-        'not_finalized',
-        'eligibility',
-      ),
-      makeSystemRequirement(
-        'team_identity',
-        'Team identity configured',
-        reasons.includes('missing_team_identity'),
-        'missing_team_identity',
-        'identity',
-      ),
-    ];
-
-    const missingStaffRoles = Array.from(new Set(reasons.filter((r) => r.startsWith('missing_staff_role:'))))
-      .map((reason) => {
-        const role = reason.replace('missing_staff_role:', '');
-        return makeSystemRequirement(`staff_role:${role}`, `Required staff role: ${role}`, true, reason, 'contacts');
-      });
-    requirementRows.push(...missingStaffRoles);
-
-    const mappedManualRows = mappedItems.map((it: any) => {
+    const requirementRows = mappedItems.map((it: any) => {
       const reasonCode = `compliance_item_incomplete:${String(it.key)}`;
       const blocking = reasons.includes(reasonCode);
       return {
@@ -838,8 +808,6 @@ export class TeamService {
         attachments: it.attachments ?? [],
       };
     });
-
-    requirementRows.push(...mappedManualRows);
 
     const dedupedReasonCodes = new Set<string>();
     for (const row of requirementRows) {

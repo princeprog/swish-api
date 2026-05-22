@@ -56,6 +56,17 @@ function getMissingEvidenceReasons(config: any, statusRow: { attachments?: any; 
   return reasons;
 }
 
+function getRosterRules(config: any, fallbackMin: number): { minPlayers: number; maxPlayers: number | null } {
+  const rules = (config?.roster_rules ?? {}) as any;
+  const minPlayers = Number(rules.min_players ?? config?.min_players ?? fallbackMin);
+  const rawMax = rules.max_players ?? config?.max_players ?? null;
+  const maxPlayers = rawMax === null || rawMax === undefined || rawMax === '' ? null : Number(rawMax);
+  return {
+    minPlayers: Number.isFinite(minPlayers) && minPlayers > 0 ? minPlayers : fallbackMin,
+    maxPlayers: maxPlayers !== null && Number.isFinite(maxPlayers) && maxPlayers > 0 ? maxPlayers : null,
+  };
+}
+
 function addStaffRole(set: Set<string>, role: string) {
   const normalized = normalizeStaffRole(role);
   if (normalized) set.add(normalized);
@@ -173,12 +184,9 @@ export async function computeSeasonTeamEligibility(
     const divisionId = t.division_id === null || t.division_id === undefined ? null : Number(t.division_id);
     const activeCount = activeCountByTeam.get(teamId) ?? 0;
 
-    const isComplete = activeCount >= minRequired;
     const isFinalized = Boolean(t.is_finalized);
 
     const reasons: string[] = [];
-    if (!isComplete) reasons.push('insufficient_active_players');
-    if (!isFinalized) reasons.push('not_finalized');
 
     const identity = identityByTeam.get(teamId);
     const hasRequiredIdentity = Boolean(
@@ -187,7 +195,6 @@ export async function computeSeasonTeamEligibility(
         identity.primary_color &&
         identity.secondary_color,
     );
-    if (!hasRequiredIdentity) reasons.push('missing_team_identity');
 
     // Staff requirements: required roles within league+season(+division) scope.
     const applicableRequiredRoles = requiredRoles.filter((r: any) => {
@@ -209,7 +216,6 @@ export async function computeSeasonTeamEligibility(
       const role = String(rr.role);
       if (!staffSet.has(normalizeStaffRole(role))) {
         hasRequiredStaff = false;
-        reasons.push(`missing_staff_role:${role}`);
       }
     }
 
@@ -219,6 +225,19 @@ export async function computeSeasonTeamEligibility(
       const seasonOk = i.season_id == null || Number(i.season_id) === Number(seasonId);
       return divOk && seasonOk;
     });
+    let rosterMinRequired = minRequired;
+    let rosterMaxAllowed: number | null = null;
+    for (const item of applicableItems as any[]) {
+      const validationMode = getValidationMode(item.config);
+      const autoSource = validationMode === 'auto' ? getAutoSource(item.config, item) : null;
+      if (autoSource !== 'roster_count') continue;
+      const rules = getRosterRules(item.config, rosterMinRequired);
+      rosterMinRequired = rules.minPlayers;
+      rosterMaxAllowed = rules.maxPlayers;
+      break;
+    }
+    const isComplete = activeCount >= rosterMinRequired && (rosterMaxAllowed === null || activeCount <= rosterMaxAllowed);
+
     let hasRequiredComplianceItems = true;
     for (const item of applicableItems as any[]) {
       const validationMode = getValidationMode(item.config);
@@ -228,7 +247,10 @@ export async function computeSeasonTeamEligibility(
         let autoComplete = false;
         if (autoSource === 'team_identity') autoComplete = hasRequiredIdentity;
         else if (autoSource === 'required_staff_roles') autoComplete = hasRequiredStaff;
-        else if (autoSource === 'roster_count') autoComplete = isComplete;
+        else if (autoSource === 'roster_count') {
+          const rules = getRosterRules(item.config, rosterMinRequired);
+          autoComplete = activeCount >= rules.minPlayers && (rules.maxPlayers === null || activeCount <= rules.maxPlayers);
+        }
         if (!autoComplete) {
           hasRequiredComplianceItems = false;
           reasons.push(`compliance_item_incomplete:${String(item.key)}`);
@@ -246,7 +268,7 @@ export async function computeSeasonTeamEligibility(
     }
 
     const rosterReady = isComplete && isFinalized;
-    const complianceReady = hasRequiredIdentity && hasRequiredComplianceItems && hasRequiredStaff;
+    const complianceReady = hasRequiredComplianceItems;
     out.push({
       team_id: teamId,
       team_name: String(t.team_name),
@@ -254,10 +276,10 @@ export async function computeSeasonTeamEligibility(
       review_status: (t.review_status as any) ?? 'draft',
       review_notes: t.review_notes ?? null,
       active_roster_count: activeCount,
-      min_required_roster_players: minRequired,
+      min_required_roster_players: rosterMinRequired,
       roster_ready: rosterReady,
       compliance_ready: complianceReady,
-      schedule_eligible: rosterReady && complianceReady,
+      schedule_eligible: complianceReady,
       is_complete: isComplete,
       is_finalized: isFinalized,
       has_required_identity: hasRequiredIdentity,

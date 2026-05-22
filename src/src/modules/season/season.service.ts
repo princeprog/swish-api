@@ -18,6 +18,75 @@ import { UpdateComplianceItemDto } from './dto/update-compliance-item.dto';
 import { CreateRequiredRoleDto } from './dto/create-required-role.dto';
 import { UpdateRequiredRoleDto } from './dto/update-required-role.dto';
 
+const DEFAULT_SEASON_COMPLIANCE_ITEMS = [
+  {
+    key: 'roster_size_requirement',
+    label: 'Roster Minimum and Maximum',
+    category: 'roster',
+    sort_order: 0,
+    config: {
+      validation_mode: 'auto',
+      auto_source: 'roster_count',
+      roster_rules: { min_players: 5, max_players: 15 },
+    },
+  },
+  {
+    key: 'proof_of_entrance_registration',
+    label: 'Proof of Entrance Registration',
+    category: 'fees',
+    sort_order: 1,
+    config: {
+      validation_mode: 'evidence',
+      evidence_rules: { min_files: 1, allow_notes: true },
+    },
+  },
+  {
+    key: 'team_identity',
+    label: 'Team Identity Completed',
+    category: 'identity',
+    sort_order: 2,
+    config: {
+      validation_mode: 'auto',
+      auto_source: 'team_identity',
+    },
+  },
+  {
+    key: 'coaching_staff_contacts',
+    label: 'Coaching Staff and Contacts',
+    category: 'contacts',
+    sort_order: 3,
+    config: {
+      validation_mode: 'auto',
+      auto_source: 'required_staff_roles',
+    },
+  },
+  {
+    key: 'uniform_set',
+    label: 'Uniform Set Confirmed',
+    category: 'uniform',
+    sort_order: 4,
+    config: {
+      validation_mode: 'evidence',
+      evidence_rules: { min_files: 1, allow_notes: true },
+    },
+  },
+  {
+    key: 'player_eligibility_documents',
+    label: 'Player Eligibility Documents',
+    category: 'eligibility',
+    sort_order: 5,
+    config: {
+      validation_mode: 'evidence',
+      evidence_rules: { min_files: 1, allow_notes: true },
+    },
+  },
+] as const;
+
+const DEFAULT_SEASON_REQUIRED_ROLES = [
+  { role: 'head_coach', label: 'Head Coach', sort_order: 0 },
+  { role: 'team_manager', label: 'Team Manager', sort_order: 1 },
+] as const;
+
 @Injectable()
 export class SeasonService {
   private readonly allowedPlayoffFormats = new Set([
@@ -55,6 +124,10 @@ export class SeasonService {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
+
+    if (createSeasonDto.create_default_requirements !== false) {
+      await this.seedDefaultSeasonRequirements(Number(season.id), membership.league_id);
+    }
 
     return {
       success: true,
@@ -359,6 +432,40 @@ export class SeasonService {
 
     if (!this.allowedPlayoffFormats.has(dto.playoff_format)) {
       throw new BadRequestException('playoff_format is not supported.');
+    }
+  }
+
+  private async seedDefaultSeasonRequirements(seasonId: number, leagueId: number) {
+    for (const item of DEFAULT_SEASON_COMPLIANCE_ITEMS) {
+      await this.db
+        .insertInto('league.team_compliance_items')
+        .values({
+          league_id: leagueId,
+          season_id: seasonId,
+          division_id: null,
+          key: item.key,
+          label: item.label,
+          category: item.category,
+          is_required: true,
+          sort_order: item.sort_order,
+          config: item.config as any,
+        })
+        .execute();
+    }
+
+    for (const role of DEFAULT_SEASON_REQUIRED_ROLES) {
+      await this.db
+        .insertInto('league.team_staff_required_roles')
+        .values({
+          league_id: leagueId,
+          season_id: seasonId,
+          division_id: null,
+          role: role.role,
+          label: role.label,
+          is_required: true,
+          sort_order: role.sort_order,
+        })
+        .execute();
     }
   }
 
