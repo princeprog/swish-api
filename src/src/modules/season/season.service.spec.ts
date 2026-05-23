@@ -154,13 +154,10 @@ describe('SeasonService', () => {
     );
 
     const complianceInserts = state.inserts.filter((i) => i.table === 'league.team_compliance_items');
-    const roleInserts = state.inserts.filter((i) => i.table === 'league.team_staff_required_roles');
-
     expect(complianceInserts.map((i) => i.values.key)).toEqual([
       'roster_size_requirement',
       'proof_of_entrance_registration',
       'team_identity',
-      'coaching_staff_contacts',
       'uniform_set',
       'player_eligibility_documents',
     ]);
@@ -178,10 +175,9 @@ describe('SeasonService', () => {
       auto_source: 'team_identity',
     });
     expect(complianceInserts[3].values.config).toEqual({
-      validation_mode: 'auto',
-      auto_source: 'required_staff_roles',
+      validation_mode: 'evidence',
+      evidence_rules: { min_files: 1, allow_notes: true },
     });
-    expect(roleInserts.map((i) => i.values.role)).toEqual(['head_coach', 'team_manager']);
   });
 
   it('allows season creation without default requirements when explicitly disabled', async () => {

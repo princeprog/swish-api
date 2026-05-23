@@ -5,8 +5,6 @@ import { CreateSeasonDivisionDto } from './dto/create-season-division.dto';
 import { UpdateSeasonDivisionDto } from './dto/update-season-division.dto';
 import { CreateComplianceItemDto } from './dto/create-compliance-item.dto';
 import { UpdateComplianceItemDto } from './dto/update-compliance-item.dto';
-import { CreateRequiredRoleDto } from './dto/create-required-role.dto';
-import { UpdateRequiredRoleDto } from './dto/update-required-role.dto';
 import { AuthGuard } from '../auth/auth.guard';
 
 @UseGuards(AuthGuard)
@@ -115,29 +113,4 @@ export class SeasonController {
     return this.seasonService.deleteComplianceItem(+id, +itemId, req.user.sub);
   }
 
-  // Required staff roles (league_admin only)
-  @Get(':id/required-staff-roles')
-  listRequiredStaffRoles(@Param('id') id: string, @Req() req: any) {
-    return this.seasonService.listRequiredStaffRoles(+id, req.user.sub);
-  }
-
-  @Post(':id/required-staff-roles')
-  createRequiredStaffRole(@Param('id') id: string, @Body() dto: CreateRequiredRoleDto, @Req() req: any) {
-    return this.seasonService.createRequiredStaffRole(+id, dto, req.user.sub);
-  }
-
-  @Patch(':id/required-staff-roles/:roleId')
-  updateRequiredStaffRole(
-    @Param('id') id: string,
-    @Param('roleId') roleId: string,
-    @Body() dto: UpdateRequiredRoleDto,
-    @Req() req: any,
-  ) {
-    return this.seasonService.updateRequiredStaffRole(+id, +roleId, dto, req.user.sub);
-  }
-
-  @Delete(':id/required-staff-roles/:roleId')
-  deleteRequiredStaffRole(@Param('id') id: string, @Param('roleId') roleId: string, @Req() req: any) {
-    return this.seasonService.deleteRequiredStaffRole(+id, +roleId, req.user.sub);
-  }
 }

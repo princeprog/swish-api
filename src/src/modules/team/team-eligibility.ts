@@ -1,6 +1,5 @@
 import type { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
-import { normalizeStaffRole } from './team-staff-contact-policy';
 
 export type SeasonTeamEligibilityRow = {
   team_id: number;
@@ -39,7 +38,6 @@ function getAutoSource(config: any, item: { key?: string | null; category?: stri
     return config.auto_source.trim();
   }
   if (item.category === 'identity') return 'team_identity';
-  if (item.key?.includes('staff') || item.key?.includes('coach') || item.category === 'contacts') return 'required_staff_roles';
   if (item.key?.includes('roster')) return 'roster_count';
   return 'team_identity';
 }
@@ -65,11 +63,6 @@ function getRosterRules(config: any, fallbackMin: number): { minPlayers: number;
     minPlayers: Number.isFinite(minPlayers) && minPlayers > 0 ? minPlayers : fallbackMin,
     maxPlayers: maxPlayers !== null && Number.isFinite(maxPlayers) && maxPlayers > 0 ? maxPlayers : null,
   };
-}
-
-function addStaffRole(set: Set<string>, role: string) {
-  const normalized = normalizeStaffRole(role);
-  if (normalized) set.add(normalized);
 }
 
 export async function computeSeasonTeamEligibility(
@@ -145,39 +138,6 @@ export async function computeSeasonTeamEligibility(
     complianceStatuses.map((s: any) => [`${Number(s.team_id)}:${Number(s.item_id)}`, s]),
   );
 
-  const requiredRoles = await db
-    .selectFrom('league.team_staff_required_roles')
-    .select(['role', 'is_required', 'season_id', 'division_id'])
-    .where('league_id', '=', leagueId)
-    .where('is_required', '=', true)
-    .where((eb) => eb.or([eb('season_id', 'is', null), eb('season_id', '=', seasonId)]))
-    .execute();
-
-  const teamStaff = await db
-    .selectFrom('league.team_staff')
-    .select(['team_id', 'role'])
-    .where('league_id', '=', leagueId)
-    .where('season_id', '=', seasonId)
-    .where('team_id', 'in', teamIds)
-    .execute();
-  const staffRolesByTeam = new Map<number, Set<string>>();
-  for (const row of teamStaff as any[]) {
-    const teamId = Number(row.team_id);
-    const set = staffRolesByTeam.get(teamId) ?? new Set<string>();
-    addStaffRole(set, String(row.role));
-    staffRolesByTeam.set(teamId, set);
-  }
-
-  const teamManagerAssignments = await db
-    .selectFrom('league.team_manager_teams')
-    .select(['team_id'])
-    .where('league_id', '=', leagueId)
-    .where('team_id', 'in', teamIds as any)
-    .execute();
-  const managerAssignedTeamIds = new Set<number>(
-    (teamManagerAssignments as any[]).map((row) => Number(row.team_id)),
-  );
-
   const out: SeasonTeamEligibilityRow[] = [];
   for (const t of seasonTeams as any[]) {
     const teamId = Number(t.team_id);
@@ -196,28 +156,7 @@ export async function computeSeasonTeamEligibility(
         identity.secondary_color,
     );
 
-    // Staff requirements: required roles within league+season(+division) scope.
-    const applicableRequiredRoles = requiredRoles.filter((r: any) => {
-      const divOk = r.division_id == null || Number(r.division_id) === Number(divisionId);
-      const seasonOk = r.season_id == null || Number(r.season_id) === Number(seasonId);
-      return divOk && seasonOk;
-    });
-    const staffSet = new Set(staffRolesByTeam.get(teamId) ?? []);
-    if (String(t.coach_name ?? '').trim()) {
-      addStaffRole(staffSet, 'head_coach');
-      addStaffRole(staffSet, 'coach');
-    }
-    if (t.team_owner_user_id || managerAssignedTeamIds.has(teamId)) {
-      addStaffRole(staffSet, 'team_manager');
-      addStaffRole(staffSet, 'manager');
-    }
-    let hasRequiredStaff = true;
-    for (const rr of applicableRequiredRoles as any[]) {
-      const role = String(rr.role);
-      if (!staffSet.has(normalizeStaffRole(role))) {
-        hasRequiredStaff = false;
-      }
-    }
+    const hasRequiredStaff = true;
 
     // Compliance items: required within league scope + season scope + (optionally) division scope.
     const applicableItems = complianceItems.filter((i: any) => {
@@ -246,7 +185,7 @@ export async function computeSeasonTeamEligibility(
         const autoSource = getAutoSource(item.config, item);
         let autoComplete = false;
         if (autoSource === 'team_identity') autoComplete = hasRequiredIdentity;
-        else if (autoSource === 'required_staff_roles') autoComplete = hasRequiredStaff;
+        else if (autoSource === 'required_staff_roles') autoComplete = true;
         else if (autoSource === 'roster_count') {
           const rules = getRosterRules(item.config, rosterMinRequired);
           autoComplete = activeCount >= rules.minPlayers && (rules.maxPlayers === null || activeCount <= rules.maxPlayers);

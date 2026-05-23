@@ -15,8 +15,6 @@ import { CreateSeasonDivisionDto } from './dto/create-season-division.dto';
 import { UpdateSeasonDivisionDto } from './dto/update-season-division.dto';
 import { CreateComplianceItemDto } from './dto/create-compliance-item.dto';
 import { UpdateComplianceItemDto } from './dto/update-compliance-item.dto';
-import { CreateRequiredRoleDto } from './dto/create-required-role.dto';
-import { UpdateRequiredRoleDto } from './dto/update-required-role.dto';
 
 const DEFAULT_SEASON_COMPLIANCE_ITEMS = [
   {
@@ -51,20 +49,10 @@ const DEFAULT_SEASON_COMPLIANCE_ITEMS = [
     },
   },
   {
-    key: 'coaching_staff_contacts',
-    label: 'Coaching Staff and Contacts',
-    category: 'contacts',
-    sort_order: 3,
-    config: {
-      validation_mode: 'auto',
-      auto_source: 'required_staff_roles',
-    },
-  },
-  {
     key: 'uniform_set',
     label: 'Uniform Set Confirmed',
     category: 'uniform',
-    sort_order: 4,
+    sort_order: 3,
     config: {
       validation_mode: 'evidence',
       evidence_rules: { min_files: 1, allow_notes: true },
@@ -74,17 +62,12 @@ const DEFAULT_SEASON_COMPLIANCE_ITEMS = [
     key: 'player_eligibility_documents',
     label: 'Player Eligibility Documents',
     category: 'eligibility',
-    sort_order: 5,
+    sort_order: 4,
     config: {
       validation_mode: 'evidence',
       evidence_rules: { min_files: 1, allow_notes: true },
     },
   },
-] as const;
-
-const DEFAULT_SEASON_REQUIRED_ROLES = [
-  { role: 'head_coach', label: 'Head Coach', sort_order: 0 },
-  { role: 'team_manager', label: 'Team Manager', sort_order: 1 },
 ] as const;
 
 @Injectable()
@@ -530,20 +513,6 @@ export class SeasonService {
         .execute();
     }
 
-    for (const role of DEFAULT_SEASON_REQUIRED_ROLES) {
-      await this.db
-        .insertInto('league.team_staff_required_roles')
-        .values({
-          league_id: leagueId,
-          season_id: seasonId,
-          division_id: null,
-          role: role.role,
-          label: role.label,
-          is_required: true,
-          sort_order: role.sort_order,
-        })
-        .execute();
-    }
   }
 
   private async assertLeagueAdminForSeason(seasonId: number, userId: string) {
@@ -653,76 +622,4 @@ export class SeasonService {
     return { success: true };
   }
 
-  async listRequiredStaffRoles(seasonId: number, userId: string) {
-    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
-
-    return this.db
-      .selectFrom('league.team_staff_required_roles')
-      .selectAll()
-      .where('league_id', '=', membership.league_id)
-      .where('season_id', '=', seasonId)
-      .orderBy('sort_order', 'asc')
-      .orderBy('label', 'asc')
-      .execute();
-  }
-
-  async createRequiredStaffRole(seasonId: number, dto: CreateRequiredRoleDto, userId: string) {
-    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
-
-    const row = await this.db
-      .insertInto('league.team_staff_required_roles')
-      .values({
-        league_id: membership.league_id,
-        season_id: seasonId,
-        division_id: dto.division_id ?? null,
-        role: dto.role,
-        label: dto.label,
-        is_required: dto.is_required ?? true,
-        sort_order: dto.sort_order ?? 0,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-
-    return { success: true, requiredRole: row };
-  }
-
-  async updateRequiredStaffRole(seasonId: number, roleId: number, dto: UpdateRequiredRoleDto, userId: string) {
-    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
-
-    const existing = await this.db
-      .selectFrom('league.team_staff_required_roles')
-      .select(['id'])
-      .where('id', '=', roleId as any)
-      .where('league_id', '=', membership.league_id)
-      .where('season_id', '=', seasonId)
-      .executeTakeFirst();
-    if (!existing) throw new NotFoundException('Required role not found.');
-
-    const updated = await this.db
-      .updateTable('league.team_staff_required_roles')
-      .set({
-        role: dto.role as any,
-        label: dto.label as any,
-        is_required: dto.is_required as any,
-        sort_order: dto.sort_order as any,
-      })
-      .where('id', '=', roleId as any)
-      .where('league_id', '=', membership.league_id)
-      .where('season_id', '=', seasonId)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-
-    return { success: true, requiredRole: updated };
-  }
-
-  async deleteRequiredStaffRole(seasonId: number, roleId: number, userId: string) {
-    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
-    await this.db
-      .deleteFrom('league.team_staff_required_roles')
-      .where('id', '=', roleId as any)
-      .where('league_id', '=', membership.league_id)
-      .where('season_id', '=', seasonId)
-      .execute();
-    return { success: true };
-  }
 }

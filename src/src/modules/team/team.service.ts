@@ -30,7 +30,6 @@ export class TeamService {
       return config.auto_source.trim();
     }
     if (item.category === 'identity') return 'team_identity';
-    if (item.key?.includes('staff') || item.key?.includes('coach') || item.category === 'contacts') return 'required_staff_roles';
     if (item.key?.includes('roster')) return 'roster_count';
     return 'team_identity';
   }
@@ -755,7 +754,7 @@ export class TeamService {
       let isAutoComplete = false;
       if (validationMode === 'auto') {
         if (autoSource === 'team_identity') isAutoComplete = Boolean(eligibilityRow?.has_required_identity);
-        else if (autoSource === 'required_staff_roles') isAutoComplete = Boolean(eligibilityRow?.has_required_staff);
+        else if (autoSource === 'required_staff_roles') isAutoComplete = true;
         else if (autoSource === 'roster_count') {
           const activeCount = Number(eligibilityRow?.active_roster_count ?? 0);
           const rules = this.getRosterRules(it.config, Number(eligibilityRow?.min_required_roster_players ?? 5));
