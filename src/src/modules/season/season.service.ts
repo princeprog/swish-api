@@ -209,6 +209,83 @@ export class SeasonService {
     };
   }
 
+  async deleteSeason(id: number, userId: string) {
+    const membership = await getUserLeagueMembership(this.db, userId);
+
+    if (!membership || membership.role !== 'league_admin') {
+      throw new ForbiddenException('Only league admins can delete seasons.');
+    }
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id', 'league_id'])
+      .where('id', '=', id)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+
+    if (!season) {
+      throw new NotFoundException('Season not found.');
+    }
+
+    const gamesCountRow = await this.db
+      .selectFrom('game.Game')
+      .select((eb) => eb.fn.count('id').as('count'))
+      .where('season_id', '=', id)
+      .executeTakeFirst();
+    const teamsCountRow = await this.db
+      .selectFrom('league.SeasonTeam')
+      .select((eb) => eb.fn.count('team_id').as('count'))
+      .where('season_id', '=', id)
+      .executeTakeFirst();
+
+    const gamesCount = Number((gamesCountRow as any)?.count ?? 0);
+    const teamsCount = Number((teamsCountRow as any)?.count ?? 0);
+
+    if (gamesCount > 0 || teamsCount > 0) {
+      throw new BadRequestException(
+        'Season cannot be deleted once teams or games are registered. Archive the season instead.',
+      );
+    }
+
+    await this.db.transaction().execute(async (trx) => {
+      await trx
+        .deleteFrom('league.team_compliance_status')
+        .where('season_id', '=', id)
+        .execute();
+      await trx
+        .deleteFrom('league.team_staff')
+        .where('season_id', '=', id)
+        .execute();
+      await trx
+        .deleteFrom('league.team_availability')
+        .where('season_id', '=', id)
+        .execute();
+      await trx
+        .deleteFrom('league.season_team_identity')
+        .where('season_id', '=', id)
+        .execute();
+      await trx
+        .deleteFrom('league.team_staff_required_roles')
+        .where('season_id', '=', id)
+        .execute();
+      await trx
+        .deleteFrom('league.team_compliance_items')
+        .where('season_id', '=', id)
+        .execute();
+      await trx
+        .deleteFrom('league.SeasonDivision')
+        .where('season_id', '=', id)
+        .execute();
+      await trx
+        .deleteFrom('league.Season')
+        .where('id', '=', id)
+        .where('league_id', '=', membership.league_id)
+        .execute();
+    });
+
+    return { success: true };
+  }
+
   private async assertLeagueAdmin(userId: string) {
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership || membership.role !== 'league_admin') {

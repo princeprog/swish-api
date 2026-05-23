@@ -38,6 +38,12 @@ export class SeasonController {
     return this.seasonService.archive(+id, userId);
   }
 
+  @Delete(':id')
+  deleteSeason(@Param('id') id: string, @Req() req: any) {
+    const userId = req.user.sub;
+    return this.seasonService.deleteSeason(+id, userId);
+  }
+
   @Get(':id/divisions')
   listDivisions(@Param('id') id: string, @Req() req: any) {
     return this.seasonService.listDivisions(+id, req.user.sub);
