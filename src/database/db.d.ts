@@ -172,12 +172,14 @@ export interface LeagueSeasonDivision {
   archived_at: Timestamp | null;
   code: string;
   created_at: Generated<Timestamp>;
+  description: string | null;
   id: Generated<number>;
   is_open: Generated<boolean>;
   name: string;
   rules_config: Generated<Json>;
   season_id: number;
   sort_order: Generated<number>;
+  team_capacity: number | null;
 }
 
 export interface LeagueSeasonTeam {

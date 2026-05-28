@@ -10,6 +10,7 @@ import { sql } from 'kysely';
 import type { Kysely } from 'kysely';
 import { DB } from 'src/database/db';
 import { CreateSeasonDto } from './dto/create-season.dto';
+import { UpdateSeasonDto } from './dto/update-season.dto';
 import { getUserLeagueMembership } from '../league/league-membership';
 import { CreateSeasonDivisionDto } from './dto/create-season-division.dto';
 import { UpdateSeasonDivisionDto } from './dto/update-season-division.dto';
@@ -86,11 +87,7 @@ export class SeasonService {
   constructor(@Inject('KYSELY_DB') private readonly db: Kysely<DB>) {}
 
   async create(createSeasonDto: CreateSeasonDto, userId: string) {
-    const membership = await getUserLeagueMembership(this.db, userId);
-
-    if (!membership) {
-      throw new UnauthorizedException('User has no league configured yet.');
-    }
+    const membership = await this.assertLeagueAdmin(userId);
 
     this.validateSeasonInput(createSeasonDto);
 
@@ -125,12 +122,33 @@ export class SeasonService {
       return [];
     }
 
-    return this.db
+    const seasons = await this.db
       .selectFrom('league.Season')
       .selectAll()
       .where('league_id', '=', membership.league_id)
       .orderBy('start_date', 'desc')
       .execute();
+
+    if (seasons.length === 0) return seasons as any;
+
+    const setupSummaryBySeasonId = await this.buildSeasonSetupSummaryBySeasonIds(
+      membership.league_id,
+      seasons.map((season: any) => Number(season.id)),
+    );
+
+    return seasons.map((season: any) => {
+      const summary = setupSummaryBySeasonId.get(Number(season.id)) ?? {
+        divisions_count: 0,
+        required_compliance_count: 0,
+      };
+      const hasBasics = Boolean(season.name && season.start_date && season.end_date && season.playoff_format);
+      return {
+        ...season,
+        divisions_count: summary.divisions_count,
+        required_compliance_count: summary.required_compliance_count,
+        setup_complete: hasBasics && summary.divisions_count > 0 && summary.required_compliance_count > 0,
+      };
+    });
   }
 
   async findOne(id: number, userId: string) {
@@ -140,12 +158,69 @@ export class SeasonService {
       throw new UnauthorizedException('User has no league configured.');
     }
 
-    return this.db
+    const season = await this.db
       .selectFrom('league.Season')
       .selectAll()
       .where('id', '=', id)
       .where('league_id', '=', membership.league_id)
       .executeTakeFirst();
+
+    if (!season) return season;
+
+    const setupSummaryBySeasonId = await this.buildSeasonSetupSummaryBySeasonIds(
+      membership.league_id,
+      [Number(id)],
+    );
+    const summary = setupSummaryBySeasonId.get(Number(id)) ?? {
+      divisions_count: 0,
+      required_compliance_count: 0,
+    };
+    const hasBasics = Boolean(season.name && season.start_date && season.end_date && season.playoff_format);
+    return {
+      ...season,
+      divisions_count: summary.divisions_count,
+      required_compliance_count: summary.required_compliance_count,
+      setup_complete: hasBasics && summary.divisions_count > 0 && summary.required_compliance_count > 0,
+    };
+  }
+
+  async update(id: number, dto: UpdateSeasonDto, userId: string) {
+    const membership = await this.assertLeagueAdmin(userId);
+
+    this.validateSeasonInput(dto);
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .selectAll()
+      .where('id', '=', id)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+
+    if (!season) {
+      throw new NotFoundException('Season not found.');
+    }
+
+    const updated = await this.db
+      .updateTable('league.Season')
+      .set({
+        name: dto.name.trim() as any,
+        start_date: dto.start_date as any,
+        end_date: dto.end_date as any,
+        playoff_format: dto.playoff_format as any,
+      })
+      .where('id', '=', id)
+      .where('league_id', '=', membership.league_id)
+      .returningAll()
+      .executeTakeFirst();
+
+    if (!updated) {
+      throw new NotFoundException('Season not found.');
+    }
+
+    return {
+      success: true,
+      season: updated,
+    };
   }
 
   async archive(id: number, userId: string) {
@@ -272,7 +347,7 @@ export class SeasonService {
   private async assertLeagueAdmin(userId: string) {
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership || membership.role !== 'league_admin') {
-      throw new ForbiddenException('Only league admins can manage season divisions.');
+      throw new ForbiddenException('Only league admins can manage seasons.');
     }
     return membership;
   }
@@ -323,10 +398,12 @@ export class SeasonService {
         season_id: seasonId,
         name,
         code,
+        description: dto.description?.trim() || null,
         sort_order: dto.sort_order ?? 0,
         age_min: dto.age_min ?? null,
         age_max: dto.age_max ?? null,
         is_open: dto.is_open ?? false,
+        team_capacity: dto.team_capacity ?? null,
         rules_config: (dto.rules_config ?? {}) as any,
         archived_at: null,
       } as any)
@@ -361,10 +438,12 @@ export class SeasonService {
     const patch: any = {};
     if (dto.name !== undefined) patch.name = dto.name.trim();
     if (dto.code !== undefined) patch.code = dto.code.trim();
+    if (dto.description !== undefined) patch.description = dto.description?.trim() || null;
     if (dto.sort_order !== undefined) patch.sort_order = dto.sort_order;
     if (dto.age_min !== undefined) patch.age_min = dto.age_min;
     if (dto.age_max !== undefined) patch.age_max = dto.age_max;
     if (dto.is_open !== undefined) patch.is_open = dto.is_open;
+    if (dto.team_capacity !== undefined) patch.team_capacity = dto.team_capacity;
     if (dto.rules_config !== undefined) patch.rules_config = (dto.rules_config ?? {}) as any;
 
     if (Object.keys(patch).length === 0) return { success: true };
@@ -394,6 +473,63 @@ export class SeasonService {
     await this.db
       .updateTable('league.SeasonDivision')
       .set({ archived_at: sql`now()` } as any)
+      .where('id', '=', divisionId)
+      .where('season_id', '=', seasonId)
+      .execute();
+
+    return { success: true };
+  }
+
+  async deleteDivision(seasonId: number, divisionId: number, userId: string) {
+    const membership = await this.assertLeagueAdmin(userId);
+
+    const season = await this.db
+      .selectFrom('league.Season')
+      .select(['id'])
+      .where('id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .executeTakeFirst();
+
+    if (!season) throw new NotFoundException('Season not found.');
+
+    const existing = await this.db
+      .selectFrom('league.SeasonDivision')
+      .select(['id'])
+      .where('id', '=', divisionId)
+      .where('season_id', '=', seasonId)
+      .executeTakeFirst();
+
+    if (!existing) throw new NotFoundException('Division not found.');
+
+    const assignedTeams = await this.db
+      .selectFrom('league.SeasonTeam')
+      .select((eb) => eb.fn.count('team_id').as('count'))
+      .where('season_id', '=', seasonId)
+      .where('division_id', '=', divisionId)
+      .executeTakeFirst();
+
+    if (Number((assignedTeams as any)?.count ?? 0) > 0) {
+      throw new BadRequestException(
+        'This division cannot be removed because teams are already assigned to it.',
+      );
+    }
+
+    const scopedRequirements = await this.db
+      .selectFrom('league.team_compliance_items')
+      .select((eb) => eb.fn.count('id').as('count'))
+      .where('season_id', '=', seasonId)
+      .where('league_id', '=', membership.league_id)
+      .where('division_id', '=', divisionId)
+      .executeTakeFirst();
+
+    if (Number((scopedRequirements as any)?.count ?? 0) > 0) {
+      throw new BadRequestException(
+        'This division cannot be removed because season requirements are scoped to it.',
+      );
+    }
+
+    await this.db
+      .deleteFrom('league.SeasonDivision')
       .where('id', '=', divisionId)
       .where('season_id', '=', seasonId)
       .execute();
@@ -470,7 +606,7 @@ export class SeasonService {
     return { success: true };
   }
 
-  private validateSeasonInput(dto: CreateSeasonDto) {
+  private validateSeasonInput(dto: Pick<CreateSeasonDto, 'name' | 'start_date' | 'end_date' | 'playoff_format'>) {
     if (!dto.name?.trim()) {
       throw new BadRequestException('Season name is required.');
     }
@@ -493,6 +629,49 @@ export class SeasonService {
     if (!this.allowedPlayoffFormats.has(dto.playoff_format)) {
       throw new BadRequestException('playoff_format is not supported.');
     }
+  }
+
+  private async buildSeasonSetupSummaryBySeasonIds(leagueId: number, seasonIds: number[]) {
+    if (seasonIds.length === 0) {
+      return new Map<number, { divisions_count: number; required_compliance_count: number }>();
+    }
+
+    const activeDivisions = await this.db
+      .selectFrom('league.SeasonDivision')
+      .select(['season_id'])
+      .select((eb) => eb.fn.count('id').as('count'))
+      .where('season_id', 'in', seasonIds as any)
+      .where('archived_at', 'is', null)
+      .groupBy('season_id')
+      .execute();
+
+    const requiredComplianceItems = await this.db
+      .selectFrom('league.team_compliance_items')
+      .select(['season_id'])
+      .select((eb) => eb.fn.count('id').as('count'))
+      .where('league_id', '=', leagueId)
+      .where('season_id', 'in', seasonIds as any)
+      .where('archived_at', 'is', null)
+      .where('is_required', '=', true)
+      .groupBy('season_id')
+      .execute();
+
+    const divisionCountBySeasonId = new Map<number, number>(
+      activeDivisions.map((row: any) => [Number(row.season_id), Number(row.count ?? 0)]),
+    );
+    const requiredComplianceBySeasonId = new Map<number, number>(
+      requiredComplianceItems.map((row: any) => [Number(row.season_id), Number(row.count ?? 0)]),
+    );
+
+    const summaryBySeasonId = new Map<number, { divisions_count: number; required_compliance_count: number }>();
+    for (const seasonId of seasonIds) {
+      summaryBySeasonId.set(Number(seasonId), {
+        divisions_count: divisionCountBySeasonId.get(Number(seasonId)) ?? 0,
+        required_compliance_count: requiredComplianceBySeasonId.get(Number(seasonId)) ?? 0,
+      });
+    }
+
+    return summaryBySeasonId;
   }
 
   private async seedDefaultSeasonRequirements(seasonId: number, leagueId: number) {

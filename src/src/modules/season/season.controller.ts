@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Body, Param, Patch, UseGuards, Req, Delete, Query } from '@nestjs/common';
 import { SeasonService } from './season.service';
 import { CreateSeasonDto } from './dto/create-season.dto';
+import { UpdateSeasonDto } from './dto/update-season.dto';
 import { CreateSeasonDivisionDto } from './dto/create-season-division.dto';
 import { UpdateSeasonDivisionDto } from './dto/update-season-division.dto';
 import { CreateComplianceItemDto } from './dto/create-compliance-item.dto';
@@ -28,6 +29,12 @@ export class SeasonController {
   findOne(@Param('id') id: string, @Req() req: any) {
     const userId = req.user.sub;
     return this.seasonService.findOne(+id, userId);
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() updateSeasonDto: UpdateSeasonDto, @Req() req: any) {
+    const userId = req.user.sub;
+    return this.seasonService.update(+id, updateSeasonDto, userId);
   }
 
   @Patch(':id/archive')
@@ -65,6 +72,11 @@ export class SeasonController {
   @Patch(':id/divisions/:divisionId/archive')
   archiveDivision(@Param('id') id: string, @Param('divisionId') divisionId: string, @Req() req: any) {
     return this.seasonService.archiveDivision(+id, +divisionId, req.user.sub);
+  }
+
+  @Delete(':id/divisions/:divisionId')
+  deleteDivision(@Param('id') id: string, @Param('divisionId') divisionId: string, @Req() req: any) {
+    return this.seasonService.deleteDivision(+id, +divisionId, req.user.sub);
   }
 
   @Get(':id/teams')
