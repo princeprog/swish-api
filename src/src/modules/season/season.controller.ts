@@ -105,6 +105,11 @@ export class SeasonController {
     return this.seasonService.createComplianceItem(+id, dto, req.user.sub);
   }
 
+  @Post(':id/compliance-items/seed-defaults')
+  seedDefaultComplianceItems(@Param('id') id: string, @Req() req: any) {
+    return this.seasonService.seedDefaultComplianceItems(+id, req.user.sub);
+  }
+
   @Patch(':id/compliance-items/:itemId')
   updateComplianceItem(
     @Param('id') id: string,

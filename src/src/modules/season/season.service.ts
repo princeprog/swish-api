@@ -105,7 +105,7 @@ export class SeasonService {
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    if (createSeasonDto.create_default_requirements !== false) {
+    if (createSeasonDto.create_default_requirements === true) {
       await this.seedDefaultSeasonRequirements(Number(season.id), membership.league_id);
     }
 
@@ -744,6 +744,31 @@ export class SeasonService {
       .executeTakeFirstOrThrow();
 
     return { success: true, item: row };
+  }
+
+  async seedDefaultComplianceItems(seasonId: number, userId: string) {
+    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+
+    const existingCountRow = await this.db
+      .selectFrom('league.team_compliance_items')
+      .select((eb) => eb.fn.count('id').as('count'))
+      .where('league_id', '=', membership.league_id)
+      .where('season_id', '=', seasonId)
+      .where('archived_at', 'is', null)
+      .executeTakeFirst();
+
+    const existingCount = Number((existingCountRow as any)?.count ?? 0);
+    if (existingCount > 0) {
+      throw new BadRequestException('Season requirements already exist for this season.');
+    }
+
+    await this.seedDefaultSeasonRequirements(seasonId, membership.league_id);
+
+    const items = await this.listComplianceItems(seasonId, userId, false);
+    return {
+      success: true,
+      items,
+    };
   }
 
   async updateComplianceItem(seasonId: number, itemId: number, dto: UpdateComplianceItemDto, userId: string) {
