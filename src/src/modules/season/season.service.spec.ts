@@ -1,7 +1,9 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
 jest.mock('kysely', () => ({
-  sql: jest.fn(() => new Date()),
+  sql: jest.fn(() => ({
+    as: jest.fn(() => 'count_sql'),
+  })),
 }));
 
 import { SeasonService } from './season.service';
@@ -19,12 +21,43 @@ describe('SeasonService', () => {
         playoff_format: 'best_of_three',
         status: 1,
       },
+      seasons: [
+        {
+          id: 5,
+          league_id: 12,
+          name: 'Summer 2026',
+          start_date: new Date('2026-06-01'),
+          end_date: new Date('2026-08-01'),
+          playoff_format: 'best_of_three',
+          status: 1,
+        },
+        {
+          id: 6,
+          league_id: 12,
+          name: 'Governor Cup 2026',
+          start_date: new Date('2026-09-01'),
+          end_date: new Date('2026-11-01'),
+          playoff_format: 'single_elimination',
+          status: 1,
+        },
+        {
+          id: 7,
+          league_id: 12,
+          name: 'Holiday Cup 2026',
+          start_date: new Date('2026-12-01'),
+          end_date: new Date('2026-12-31'),
+          playoff_format: 'twice_to_beat',
+          status: 1,
+        },
+      ],
       inserts: [] as Array<{ table: string; values: any }>,
     };
 
     const db = {
       selectFrom: jest.fn((table: string) => {
         const filters: Record<string, any> = {};
+        let limitValue: number | undefined;
+        let offsetValue = 0;
         const builder = {
           selectAll: jest.fn(() => builder),
           select: jest.fn(() => builder),
@@ -33,7 +66,22 @@ describe('SeasonService', () => {
             return builder;
           }),
           orderBy: jest.fn(() => builder),
-          execute: jest.fn(async () => [state.season]),
+          groupBy: jest.fn(() => builder),
+          limit: jest.fn((limit: number) => {
+            limitValue = limit;
+            return builder;
+          }),
+          offset: jest.fn((offset: number) => {
+            offsetValue = offset;
+            return builder;
+          }),
+          execute: jest.fn(async () => {
+            if (table === 'league.Season') {
+              const leagueSeasons = state.seasons.filter((season) => season.league_id === filters.league_id);
+              return leagueSeasons.slice(offsetValue, limitValue ? offsetValue + limitValue : undefined);
+            }
+            return [];
+          }),
           executeTakeFirst: jest.fn(async () => {
             if (table === 'auth.users') {
               return { active_league_id: state.membership.league_id };
@@ -43,6 +91,11 @@ describe('SeasonService', () => {
               return undefined;
             }
             if (table === 'league.Season') {
+              if (filters.league_id && filters.id === undefined) {
+                return {
+                  total: state.seasons.filter((season) => season.league_id === filters.league_id).length,
+                };
+              }
               if (filters.id === state.season.id && filters.league_id === state.season.league_id) {
                 return state.season;
               }
@@ -149,6 +202,7 @@ describe('SeasonService', () => {
         start_date: '2026-06-01',
         end_date: '2026-08-01',
         playoff_format: 'best_of_three',
+        create_default_requirements: true,
       },
       'league-admin-user',
     );
@@ -197,6 +251,23 @@ describe('SeasonService', () => {
 
     expect(state.inserts.some((i) => i.table === 'league.team_compliance_items')).toBe(false);
     expect(state.inserts.some((i) => i.table === 'league.team_staff_required_roles')).toBe(false);
+  });
+
+  it('returns paginated seasons for the user league', async () => {
+    const { db } = createDb();
+    const service = new SeasonService(db);
+
+    const result = await service.findForLeague('league-admin-user', { page: 1, limit: 20 });
+
+    expect(result.data.map((season: any) => season.id)).toEqual([5, 6, 7]);
+    expect(result.pagination).toEqual({
+      page: 1,
+      limit: 20,
+      total: 3,
+      total_pages: 1,
+      has_next_page: false,
+      has_previous_page: false,
+    });
   });
 
   it('archives an active season for league admin in same league', async () => {

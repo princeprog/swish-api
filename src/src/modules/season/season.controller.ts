@@ -20,9 +20,9 @@ export class SeasonController {
   }
 
   @Get()
-  findAll(@Req() req: any) {
+  findAll(@Req() req: any, @Query('page') page?: string, @Query('limit') limit?: string) {
     const userId = req.user.sub;
-    return this.seasonService.findForLeague(userId);
+    return this.seasonService.findForLeague(userId, { page, limit });
   }
 
   @Get(':id')

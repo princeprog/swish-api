@@ -16,6 +16,7 @@ import { CreateSeasonDivisionDto } from './dto/create-season-division.dto';
 import { UpdateSeasonDivisionDto } from './dto/update-season-division.dto';
 import { CreateComplianceItemDto } from './dto/create-compliance-item.dto';
 import { UpdateComplianceItemDto } from './dto/update-compliance-item.dto';
+import { buildPaginatedResponse, normalizePaginationOptions, paginateQuery, PaginationInput } from '../../../common/pagination';
 
 const DEFAULT_SEASON_COMPLIANCE_ITEMS = [
   {
@@ -115,40 +116,51 @@ export class SeasonService {
     };
   }
 
-  async findForLeague(userId: string) {
+  async findForLeague(userId: string, pagination: PaginationInput = {}) {
     const membership = await getUserLeagueMembership(this.db, userId);
 
     if (!membership) {
-      return [];
+      return buildPaginatedResponse([], 0, normalizePaginationOptions(pagination));
     }
 
-    const seasons = await this.db
-      .selectFrom('league.Season')
-      .selectAll()
-      .where('league_id', '=', membership.league_id)
-      .orderBy('start_date', 'desc')
-      .execute();
+    const seasonsPage = await paginateQuery<any>(
+      this.db
+        .selectFrom('league.Season')
+        .selectAll()
+        .where('league_id', '=', membership.league_id)
+        .orderBy('start_date', 'desc'),
+      this.db
+        .selectFrom('league.Season')
+        .select(sql<number>`count(*)`.as('total'))
+        .where('league_id', '=', membership.league_id),
+      pagination,
+    );
 
-    if (seasons.length === 0) return seasons as any;
+    const seasons = seasonsPage.data;
+
+    if (seasons.length === 0) return seasonsPage;
 
     const setupSummaryBySeasonId = await this.buildSeasonSetupSummaryBySeasonIds(
       membership.league_id,
       seasons.map((season: any) => Number(season.id)),
     );
 
-    return seasons.map((season: any) => {
-      const summary = setupSummaryBySeasonId.get(Number(season.id)) ?? {
-        divisions_count: 0,
-        required_compliance_count: 0,
-      };
-      const hasBasics = Boolean(season.name && season.start_date && season.end_date && season.playoff_format);
-      return {
-        ...season,
-        divisions_count: summary.divisions_count,
-        required_compliance_count: summary.required_compliance_count,
-        setup_complete: hasBasics && summary.divisions_count > 0 && summary.required_compliance_count > 0,
-      };
-    });
+    return {
+      ...seasonsPage,
+      data: seasons.map((season: any) => {
+        const summary = setupSummaryBySeasonId.get(Number(season.id)) ?? {
+          divisions_count: 0,
+          required_compliance_count: 0,
+        };
+        const hasBasics = Boolean(season.name && season.start_date && season.end_date && season.playoff_format);
+        return {
+          ...season,
+          divisions_count: summary.divisions_count,
+          required_compliance_count: summary.required_compliance_count,
+          setup_complete: hasBasics && summary.divisions_count > 0 && summary.required_compliance_count > 0,
+        };
+      }),
+    };
   }
 
   async findOne(id: number, userId: string) {
