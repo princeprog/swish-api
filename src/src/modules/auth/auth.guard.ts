@@ -1,6 +1,7 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -50,7 +51,7 @@ export class AuthGuard implements CanActivate {
       .executeTakeFirst();
 
     if (control?.maintenance_lock_enabled) {
-      throw new UnauthorizedException('Maintenance mode is enabled. Mutations are temporarily locked.');
+      throw new ForbiddenException('Maintenance mode is enabled. Mutations are temporarily locked.');
     }
   }
 

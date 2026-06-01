@@ -1,4 +1,5 @@
 import { GameService } from './game.service';
+import { ForbiddenException } from '@nestjs/common';
 
 describe('GameService round-robin generation', () => {
   function createDb() {
@@ -152,5 +153,57 @@ describe('GameService status lifecycle', () => {
     await expect(service.updateStatus(500, { status: 1 }, 'league-admin-user')).rejects.toThrow(
       'Invalid game status transition',
     );
+  });
+});
+
+describe('GameService role authorization', () => {
+  function createDbWithRole(role: string) {
+    const state = {
+      membership: { league_id: 12, role },
+    };
+
+    const db = {
+      selectFrom: jest.fn((table: string) => {
+        const filters: Record<string, any> = {};
+        const builder = {
+          select: jest.fn(() => builder),
+          selectAll: jest.fn(() => builder),
+          innerJoin: jest.fn(() => builder),
+          where: jest.fn((column: string, _op: string, value: any) => {
+            filters[column] = value;
+            return builder;
+          }),
+          executeTakeFirst: jest.fn(async () => {
+            if (table === 'league.league_members') {
+              return filters.user_id === 'user-1' ? state.membership : undefined;
+            }
+            return undefined;
+          }),
+          execute: jest.fn(async () => []),
+          orderBy: jest.fn(() => builder),
+        };
+        return builder;
+      }),
+    };
+
+    return db as any;
+  }
+
+  it('rejects non-league-admin schedule generation', async () => {
+    const service = new GameService(createDbWithRole('team_manager'));
+    await expect(
+      service.generateRoundRobinSchedule(
+        {
+          season_id: 99,
+          start_date: '2026-10-01',
+          game_time: '18:30',
+          venue: 'Swish Arena',
+          game_type: 'regular',
+          frequency_days: 1,
+          games_per_team: 3,
+        },
+        'user-1',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

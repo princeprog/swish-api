@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 import { DB } from 'src/database/db';
@@ -21,6 +21,12 @@ import { computeSeasonTeamEligibility } from '../team/team-eligibility';
 @Injectable()
 export class GameService {
   constructor(@Inject('KYSELY_DB') private readonly db: Kysely<DB>) {}
+
+  private assertLeagueAdminMembership(membership: { role: string }) {
+    if (membership.role !== 'league_admin') {
+      throw new ForbiddenException('Only league admins can perform this action.');
+    }
+  }
 
   private async assertSameDivisionForSeasonTeams(seasonId: number, homeTeamId: number, awayTeamId: number) {
     const rows = await this.db
@@ -66,9 +72,13 @@ export class GameService {
       throw new NotFoundException('Match not found or does not belong to your league.');
     }
 
+    if (membership.role !== 'league_admin' && membership.role !== 'scorekeeper') {
+      throw new ForbiddenException('Not authorized to access this match.');
+    }
+
     // Scorekeepers are strictly scoped to assigned games.
     if (membership.role === 'scorekeeper' && (game as any).scorekeeper_user_id !== userId) {
-      throw new UnauthorizedException('Not authorized to access this match.');
+      throw new ForbiddenException('Not authorized to access this match.');
     }
 
     return { membership, game };
@@ -78,7 +88,7 @@ export class GameService {
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership) throw new UnauthorizedException('User has no league configured.');
     if (membership.role !== 'league_admin') {
-      throw new UnauthorizedException('Only league admins can assign scorekeepers.');
+      throw new ForbiddenException('Only league admins can assign scorekeepers.');
     }
 
     // Ensure the game belongs to this league.
@@ -263,6 +273,7 @@ export class GameService {
 
   async updateScore(gameId: number, updateScoreDto: UpdateGameScoreDto, userId: string) {
     const { membership } = await this.assertGameAccess(gameId, userId);
+    this.assertLeagueAdminMembership(membership);
 
     const game = await this.db
       .selectFrom('game.Game as g')
@@ -995,6 +1006,7 @@ export class GameService {
   async publishGameSummary(gameId: number, dto: PublishGameSummaryDto, userId: string) {
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership) throw new UnauthorizedException('User has no league configured.');
+    this.assertLeagueAdminMembership(membership);
     const game = await this.getLeagueGame(gameId, membership.league_id);
     if (!dto.narrative?.trim()) throw new BadRequestException('narrative is required.');
 
@@ -1053,6 +1065,7 @@ export class GameService {
   async setGameAwards(gameId: number, dto: SetGameAwardsDto, userId: string) {
     const membership = await getUserLeagueMembership(this.db, userId);
     if (!membership) throw new UnauthorizedException('User has no league configured.');
+    this.assertLeagueAdminMembership(membership);
     const game = await this.db
       .selectFrom('game.Game as g')
       .innerJoin('league.Season as s', 's.id', 'g.season_id')
@@ -1345,3 +1358,10 @@ export class GameService {
     return { ready: true, message: 'Schedule can be created.', rosterSummary: eligibility };
   }
 }
+    this.assertLeagueAdminMembership(membership);
+
+    this.assertLeagueAdminMembership(membership);
+
+    this.assertLeagueAdminMembership(membership);
+
+    this.assertLeagueAdminMembership(membership);
