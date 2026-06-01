@@ -1358,10 +1358,3 @@ export class GameService {
     return { ready: true, message: 'Schedule can be created.', rosterSummary: eligibility };
   }
 }
-    this.assertLeagueAdminMembership(membership);
-
-    this.assertLeagueAdminMembership(membership);
-
-    this.assertLeagueAdminMembership(membership);
-
-    this.assertLeagueAdminMembership(membership);
