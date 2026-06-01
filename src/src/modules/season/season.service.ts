@@ -162,6 +162,7 @@ export class SeasonService {
         });
         return {
           ...season,
+          is_published: Number(season.status) === 2,
           divisions_count: summary.divisions_count,
           required_compliance_count: summary.required_compliance_count,
           setup_complete: setup.setup_complete,
@@ -205,6 +206,7 @@ export class SeasonService {
     });
     return {
       ...season,
+      is_published: Number(season.status) === 2,
       divisions_count: summary.divisions_count,
       required_compliance_count: summary.required_compliance_count,
       setup_complete: setup.setup_complete,
@@ -218,6 +220,7 @@ export class SeasonService {
     return {
       season_id: season.id,
       setup_complete: Boolean((season as any).setup_complete),
+      is_published: Boolean((season as any).is_published),
       divisions_count: Number((season as any).divisions_count ?? 0),
       required_compliance_count: Number((season as any).required_compliance_count ?? 0),
       setup_missing: Array.isArray((season as any).setup_missing) ? (season as any).setup_missing : [],
@@ -239,6 +242,7 @@ export class SeasonService {
     if (!season) {
       throw new NotFoundException('Season not found.');
     }
+    this.assertSeasonSetupEditable(season);
 
     const updated = await this.db
       .updateTable('league.Season')
@@ -403,6 +407,7 @@ export class SeasonService {
       .executeTakeFirst();
 
     if (!season) throw new NotFoundException('Season not found.');
+    this.assertSeasonSetupEditable(season);
 
     return this.db
       .selectFrom('league.SeasonDivision')
@@ -425,6 +430,7 @@ export class SeasonService {
       .executeTakeFirst();
 
     if (!season) throw new NotFoundException('Season not found.');
+    this.assertSeasonSetupEditable(season);
 
     const name = (dto.name ?? '').trim();
     const code = (dto.code ?? '').trim();
@@ -463,6 +469,7 @@ export class SeasonService {
       .executeTakeFirst();
 
     if (!season) throw new NotFoundException('Season not found.');
+    this.assertSeasonSetupEditable(season);
 
     const existing = await this.db
       .selectFrom('league.SeasonDivision')
@@ -508,6 +515,7 @@ export class SeasonService {
       .executeTakeFirst();
 
     if (!season) throw new NotFoundException('Season not found.');
+    this.assertSeasonSetupEditable(season);
 
     await this.db
       .updateTable('league.SeasonDivision')
@@ -644,6 +652,58 @@ export class SeasonService {
     return { success: true };
   }
 
+  async publishSeason(seasonId: number, userId: string) {
+    const { season } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    if (this.isSeasonPublished(season)) {
+      throw new BadRequestException('Season is already published.');
+    }
+    if (Number(season.status) === 3) {
+      throw new BadRequestException('Archived seasons cannot be published.');
+    }
+
+    const summaryBySeasonId = await this.buildSeasonSetupSummaryBySeasonIds(Number(season.league_id), [Number(season.id)]);
+    const summary = summaryBySeasonId.get(Number(season.id)) ?? { divisions_count: 0, required_compliance_count: 0 };
+    const setup = this.computeSetupState({
+      name: season.name as any,
+      start_date: season.start_date as any,
+      end_date: season.end_date as any,
+      playoff_format: season.playoff_format as any,
+      divisions_count: summary.divisions_count,
+      required_compliance_count: summary.required_compliance_count,
+    });
+
+    if (!setup.setup_complete) {
+      throw new BadRequestException(`Season setup is incomplete: ${setup.setup_missing.join(', ')}`);
+    }
+
+    const updated = await this.db
+      .updateTable('league.Season')
+      .set({ status: 2 as any })
+      .where('id', '=', seasonId)
+      .where('league_id', '=', season.league_id as any)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, season: updated };
+  }
+
+  async reopenSeason(seasonId: number, userId: string) {
+    const { season } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    if (!this.isSeasonPublished(season)) {
+      throw new BadRequestException('Only published seasons can be reopened.');
+    }
+
+    const updated = await this.db
+      .updateTable('league.Season')
+      .set({ status: 1 as any })
+      .where('id', '=', seasonId)
+      .where('league_id', '=', season.league_id as any)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    return { success: true, season: updated };
+  }
+
   private validateSeasonInput(dto: Pick<CreateSeasonDto, 'name' | 'start_date' | 'end_date' | 'playoff_format'>) {
     if (!dto.name?.trim()) {
       throw new BadRequestException('Season name is required.');
@@ -732,6 +792,19 @@ export class SeasonService {
     };
   }
 
+  private isSeasonPublished(season: any) {
+    return Number(season?.status) === 2;
+  }
+
+  private assertSeasonSetupEditable(season: any) {
+    if (this.isSeasonPublished(season)) {
+      throw new BadRequestException('Season setup is locked after publish. Reopen setup to make changes.');
+    }
+    if (Number(season?.status) === 3) {
+      throw new BadRequestException('Archived seasons cannot be modified.');
+    }
+  }
+
   private async seedDefaultSeasonRequirements(seasonId: number, leagueId: number) {
     for (const item of DEFAULT_SEASON_COMPLIANCE_ITEMS) {
       await this.db
@@ -759,13 +832,13 @@ export class SeasonService {
 
     const season = await this.db
       .selectFrom('league.Season')
-      .select(['id', 'league_id'])
+      .selectAll()
       .where('id', '=', seasonId)
       .where('league_id', '=', membership.league_id)
       .executeTakeFirst();
     if (!season) throw new NotFoundException('Season not found or does not belong to your league.');
 
-    return { membership };
+    return { membership, season };
   }
 
   async listComplianceItems(seasonId: number, userId: string, includeArchived: boolean) {
@@ -783,7 +856,8 @@ export class SeasonService {
   }
 
   async createComplianceItem(seasonId: number, dto: CreateComplianceItemDto, userId: string) {
-    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    const { membership, season } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    this.assertSeasonSetupEditable(season);
 
     const row = await this.db
       .insertInto('league.team_compliance_items')
@@ -805,7 +879,8 @@ export class SeasonService {
   }
 
   async seedDefaultComplianceItems(seasonId: number, userId: string) {
-    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    const { membership, season } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    this.assertSeasonSetupEditable(season);
 
     const existingCountRow = await this.db
       .selectFrom('league.team_compliance_items')
@@ -830,7 +905,8 @@ export class SeasonService {
   }
 
   async updateComplianceItem(seasonId: number, itemId: number, dto: UpdateComplianceItemDto, userId: string) {
-    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    const { membership, season } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    this.assertSeasonSetupEditable(season);
 
     const existing = await this.db
       .selectFrom('league.team_compliance_items')
@@ -862,7 +938,8 @@ export class SeasonService {
   }
 
   async archiveComplianceItem(seasonId: number, itemId: number, userId: string) {
-    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    const { membership, season } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    this.assertSeasonSetupEditable(season);
     await this.db
       .updateTable('league.team_compliance_items')
       .set({ archived_at: new Date() as any })
@@ -874,7 +951,8 @@ export class SeasonService {
   }
 
   async deleteComplianceItem(seasonId: number, itemId: number, userId: string) {
-    const { membership } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    const { membership, season } = await this.assertLeagueAdminForSeason(seasonId, userId);
+    this.assertSeasonSetupEditable(season);
     await this.db
       .deleteFrom('league.team_compliance_items')
       .where('id', '=', itemId as any)

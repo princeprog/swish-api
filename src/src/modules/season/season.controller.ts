@@ -49,6 +49,16 @@ export class SeasonController {
     return this.seasonService.archive(+id, userId);
   }
 
+  @Post(':id/publish')
+  publish(@Param('id') id: string, @Req() req: any) {
+    return this.seasonService.publishSeason(+id, req.user.sub);
+  }
+
+  @Post(':id/reopen')
+  reopen(@Param('id') id: string, @Req() req: any) {
+    return this.seasonService.reopenSeason(+id, req.user.sub);
+  }
+
   @Delete(':id')
   deleteSeason(@Param('id') id: string, @Req() req: any) {
     const userId = req.user.sub;

@@ -51,6 +51,8 @@ describe('SeasonService', () => {
         },
       ],
       inserts: [] as Array<{ table: string; values: any }>,
+      divisionsCount: 1,
+      requiredComplianceCount: 1,
     };
 
     const db = {
@@ -79,6 +81,14 @@ describe('SeasonService', () => {
             if (table === 'league.Season') {
               const leagueSeasons = state.seasons.filter((season) => season.league_id === filters.league_id);
               return leagueSeasons.slice(offsetValue, limitValue ? offsetValue + limitValue : undefined);
+            }
+            if (table === 'league.SeasonDivision') {
+              if ((filters as any).season_id === undefined) return [];
+              return [{ season_id: filters.season_id, count: state.divisionsCount }];
+            }
+            if (table === 'league.team_compliance_items') {
+              if ((filters as any).season_id === undefined) return [];
+              return [{ season_id: filters.season_id, count: state.requiredComplianceCount }];
             }
             return [];
           }),
@@ -300,5 +310,45 @@ describe('SeasonService', () => {
     const service = new SeasonService(db);
 
     await expect(service.archive(99, 'league-admin-user')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('publishes a season when setup is complete', async () => {
+    const { db, state } = createDb();
+    const service = new SeasonService(db);
+    state.divisionsCount = 2;
+    state.requiredComplianceCount = 3;
+
+    const result = await service.publishSeason(5, 'league-admin-user');
+
+    expect(result.success).toBe(true);
+    expect(result.season.status).toBe(2);
+  });
+
+  it('rejects publish when setup is incomplete', async () => {
+    const { db, state } = createDb();
+    const service = new SeasonService(db);
+    state.divisionsCount = 0;
+    state.requiredComplianceCount = 0;
+
+    await expect(service.publishSeason(5, 'league-admin-user')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects setup edits while season is published', async () => {
+    const { db, state } = createDb();
+    const service = new SeasonService(db);
+    state.season.status = 2;
+
+    await expect(
+      service.update(
+        5,
+        {
+          name: 'Updated Season',
+          start_date: '2026-06-01',
+          end_date: '2026-08-01',
+          playoff_format: 'best_of_three',
+        },
+        'league-admin-user',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
