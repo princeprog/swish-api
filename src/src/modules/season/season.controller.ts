@@ -31,6 +31,12 @@ export class SeasonController {
     return this.seasonService.findOne(+id, userId);
   }
 
+  @Get(':id/setup-summary')
+  getSetupSummary(@Param('id') id: string, @Req() req: any) {
+    const userId = req.user.sub;
+    return this.seasonService.getSetupSummary(+id, userId);
+  }
+
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateSeasonDto: UpdateSeasonDto, @Req() req: any) {
     const userId = req.user.sub;

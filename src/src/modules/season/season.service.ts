@@ -152,12 +152,20 @@ export class SeasonService {
           divisions_count: 0,
           required_compliance_count: 0,
         };
-        const hasBasics = Boolean(season.name && season.start_date && season.end_date && season.playoff_format);
+        const setup = this.computeSetupState({
+          name: season.name,
+          start_date: season.start_date,
+          end_date: season.end_date,
+          playoff_format: season.playoff_format,
+          divisions_count: summary.divisions_count,
+          required_compliance_count: summary.required_compliance_count,
+        });
         return {
           ...season,
           divisions_count: summary.divisions_count,
           required_compliance_count: summary.required_compliance_count,
-          setup_complete: hasBasics && summary.divisions_count > 0 && summary.required_compliance_count > 0,
+          setup_complete: setup.setup_complete,
+          setup_missing: setup.setup_missing,
         };
       }),
     };
@@ -187,12 +195,32 @@ export class SeasonService {
       divisions_count: 0,
       required_compliance_count: 0,
     };
-    const hasBasics = Boolean(season.name && season.start_date && season.end_date && season.playoff_format);
+    const setup = this.computeSetupState({
+      name: season.name,
+      start_date: season.start_date,
+      end_date: season.end_date,
+      playoff_format: season.playoff_format,
+      divisions_count: summary.divisions_count,
+      required_compliance_count: summary.required_compliance_count,
+    });
     return {
       ...season,
       divisions_count: summary.divisions_count,
       required_compliance_count: summary.required_compliance_count,
-      setup_complete: hasBasics && summary.divisions_count > 0 && summary.required_compliance_count > 0,
+      setup_complete: setup.setup_complete,
+      setup_missing: setup.setup_missing,
+    };
+  }
+
+  async getSetupSummary(id: number, userId: string) {
+    const season = await this.findOne(id, userId);
+    if (!season) throw new NotFoundException('Season not found.');
+    return {
+      season_id: season.id,
+      setup_complete: Boolean((season as any).setup_complete),
+      divisions_count: Number((season as any).divisions_count ?? 0),
+      required_compliance_count: Number((season as any).required_compliance_count ?? 0),
+      setup_missing: Array.isArray((season as any).setup_missing) ? (season as any).setup_missing : [],
     };
   }
 
@@ -365,8 +393,7 @@ export class SeasonService {
   }
 
   async listDivisions(seasonId: number, userId: string) {
-    const membership = await getUserLeagueMembership(this.db, userId);
-    if (!membership) return [];
+    const membership = await this.assertLeagueAdmin(userId);
 
     const season = await this.db
       .selectFrom('league.Season')
@@ -550,8 +577,7 @@ export class SeasonService {
   }
 
   async listSeasonTeams(seasonId: number, userId: string) {
-    const membership = await getUserLeagueMembership(this.db, userId);
-    if (!membership) return [];
+    const membership = await this.assertLeagueAdmin(userId);
 
     const season = await this.db
       .selectFrom('league.Season')
@@ -684,6 +710,26 @@ export class SeasonService {
     }
 
     return summaryBySeasonId;
+  }
+
+  private computeSetupState(input: {
+    name: string;
+    start_date: Date | string;
+    end_date: Date | string;
+    playoff_format: string;
+    divisions_count: number;
+    required_compliance_count: number;
+  }) {
+    const hasBasics = Boolean(input.name && input.start_date && input.end_date && input.playoff_format);
+    const setup_missing: string[] = [];
+    if (!hasBasics) setup_missing.push('season_basics_incomplete');
+    if (Number(input.divisions_count) <= 0) setup_missing.push('no_active_divisions');
+    if (Number(input.required_compliance_count) <= 0) setup_missing.push('no_required_compliance_items');
+
+    return {
+      setup_complete: setup_missing.length === 0,
+      setup_missing,
+    };
   }
 
   private async seedDefaultSeasonRequirements(seasonId: number, leagueId: number) {
